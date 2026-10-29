@@ -22,10 +22,7 @@ library;
 ///
 /// [fromSite] 为真表示这个值不是我们猜的，而是站点明确给了（`copy_code`
 /// 属性之类）。两者的区别很重要：站点给的可以直接用，我们猜的要更保守。
-class const ExtractedCode({
-  required this.value,
-  required this.fromSite,
-}) {
+class const ExtractedCode({required this.value, required this.fromSite}) {
   final String value;
   final bool fromSite;
 
@@ -86,9 +83,7 @@ ExtractedCode extractCode(String text) {
 ///      见 [_looksLikePhoneContext]。
 ///   3. 长度 4~8：3 位太少（验证码几乎不会是 3 位，而日期/金额片段常是 3 位），
 ///      9 位以上是订单号/电话。
-final _codePattern = RegExp(
-  r'(?<![\dA-Za-z+\-.$/:])(\d{4,8})(?![\d\-/:])',
-);
+final _codePattern = RegExp(r'(?<![\dA-Za-z+\-.$/:])(\d{4,8})(?![\d\-/:])');
 
 /// 判断这条短信值不值得当成「带验证码的」。
 ///

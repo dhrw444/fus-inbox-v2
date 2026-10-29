@@ -169,7 +169,11 @@ class const InboxState({
     final hasMessages = merged.messages.isNotEmpty;
     return copyWith(
       messages: merged.messages,
-      phase: hasMessages ? InboxPhase.ready : (phase == InboxPhase.failed ? InboxPhase.failed : InboxPhase.waiting),
+      phase: hasMessages
+          ? InboxPhase.ready
+          : (phase == InboxPhase.failed
+                ? InboxPhase.failed
+                : InboxPhase.waiting),
       status: status,
       hits: hits,
       source: source,

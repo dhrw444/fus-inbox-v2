@@ -100,10 +100,7 @@ class const MessageCard({
         ),
       );
     }
-    return SelectableText(
-      message.text,
-      style: theme.textTheme.bodyMedium,
-    );
+    return SelectableText(message.text, style: theme.textTheme.bodyMedium);
   }
 
   /// 验证码那一行。

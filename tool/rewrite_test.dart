@@ -17,6 +17,7 @@
 library;
 
 import 'dart:math';
+
 import '../lib/core/code_extract.dart';
 import '../lib/core/sms_message.dart';
 import '../lib/core/user_agent.dart';
@@ -79,10 +80,7 @@ void _testCodeExtract() {
   // ── 语义确认 ──
   _ok('验证短信判真', looksLikeVerification('Your verification code is 123456'));
   _ok('普通短信判假', looksLikeVerification('Your order 445566 has shipped'));
-  _ok(
-    '短句无关键词也算（纯验证码短信）',
-    looksLikeVerification('123456'),
-  );
+  _ok('短句无关键词也算（纯验证码短信）', looksLikeVerification('123456'));
   _ok(
     '长句无关键词不算',
     !looksLikeVerification(
@@ -120,12 +118,8 @@ void _testMerge() {
   // ── 同 id 补字段，位置不变 ──
   {
     final r = mergeFrame(
-      current: [
-        SmsMessage(id: 'a', text: '', code: ''),
-      ],
-      incoming: [
-        SmsMessage(id: 'a', text: '完整正文', code: '123456'),
-      ],
+      current: [SmsMessage(id: 'a', text: '', code: '')],
+      incoming: [SmsMessage(id: 'a', text: '完整正文', code: '123456')],
       seenIds: {'a'},
       firstFrameDone: true,
     );
@@ -453,8 +447,10 @@ void _testVerify() {
     // 新一轮从 0 开始计时，所以「刚 restart 就弹」是错的 ——
     // 要先等够。这才是对的：重启后立刻又弹等于没给他喘气。
     _ok('restart 当刻不弹（计时归零）', !v.shouldAutoPop(after: after));
-    _ok('restart 后等够可以弹', v.tick(const Duration(seconds: 7))
-        .shouldAutoPop(after: after));
+    _ok(
+      'restart 后等够可以弹',
+      v.tick(const Duration(seconds: 7)).shouldAutoPop(after: after),
+    );
     _ok('restart 清 readySeen', !v.readySeen);
   }
 
@@ -470,7 +466,8 @@ void _testVerify() {
 }
 
 void _testStore() {
-  const msg = '{"type":"messages","items":[{"id":"a","text":"hello"}],"hits":1,"src":"api"}';
+  const msg =
+      '{"type":"messages","items":[{"id":"a","text":"hello"}],"hits":1,"src":"api"}';
 
   // ── 收消息帧 → ready ──
   {
@@ -502,7 +499,9 @@ void _testStore() {
   // ── hold 帧：设上 ──
   {
     final store = InboxStore();
-    store.ingest('{"type":"holdup","kind":"pause","title":"T","message":"M","retry":30}');
+    store.ingest(
+      '{"type":"holdup","kind":"pause","title":"T","message":"M","retry":30}',
+    );
     _ok('hold 设上', store.state.hold != null);
     _eq('kind 映射成 quota', store.state.hold!.kind, HoldKind.quota);
   }
@@ -583,9 +582,8 @@ void _testStore() {
   // ── revealMore 每次多 5 条 ──
   {
     final store = InboxStore();
-    final many = [
-      for (var i = 0; i < 20; i++) '{"id":"id$i","text":"t"}',
-    ].join(',');
+    final many = [for (var i = 0; i < 20; i++) '{"id":"id$i","text":"t"}']
+        .join(',');
     store.ingest('{"type":"messages","items":[$many]}');
     _eq('初始显示 5 条', store.state.shown.length, 5);
     store.revealMore();
@@ -627,10 +625,14 @@ void _testUserAgent() {
     final next = rotateIdentity(Random(7));
     _ok('UA 变了', next.userAgent != before);
     _ok('新 UA 和机型一致', next.userAgent.contains(next.model));
-    _ok('新 UA 和安卓版本一致',
-        next.userAgent.contains('Android ${next.androidVersion}'));
-    _ok('新 UA 和 Chrome 版本一致',
-        next.userAgent.contains('Chrome/${next.chromeMajor}.'));
+    _ok(
+      '新 UA 和安卓版本一致',
+      next.userAgent.contains('Android ${next.androidVersion}'),
+    );
+    _ok(
+      '新 UA 和 Chrome 版本一致',
+      next.userAgent.contains('Chrome/${next.chromeMajor}.'),
+    );
     // ±2 窗口
     _ok('大版本在 ±2 内', (next.chromeMajor - 141).abs() <= 2);
   }

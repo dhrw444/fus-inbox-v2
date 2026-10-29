@@ -56,7 +56,8 @@ class _HomePageState extends State<HomePage> {
       MaterialPageRoute<void>(
         builder: (_) => InboxPage(
           inboxUrl: 'https://$_siteHost/numbers/$n/',
-          title: '(${n.substring(0, 3)}) ${n.substring(3, 6)}-${n.substring(6)}',
+          title:
+              '(${n.substring(0, 3)}) ${n.substring(3, 6)}-${n.substring(6)}',
           allowedHost: _siteHost,
         ),
       ),
@@ -73,16 +74,15 @@ class _HomePageState extends State<HomePage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(
-              '输入号码',
-              style: theme.textTheme.titleMedium,
-            ),
+            Text('输入号码', style: theme.textTheme.titleMedium),
             const SizedBox(height: 8),
             TextField(
               controller: _input,
               autofocus: true,
               keyboardType: TextInputType.phone,
-              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d+()\-\s]'))],
+              inputFormatters: [
+                FilteringTextInputFormatter.allow(RegExp(r'[\d+()\-\s]')),
+              ],
               decoration: InputDecoration(
                 border: const OutlineInputBorder(),
                 hintText: '4155550100',

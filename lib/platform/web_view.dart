@@ -35,27 +35,30 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 ///   - `domStorageEnabled` —— 站点把 reader 密钥放在 IndexedDB
 ///   - `thirdPartyCookiesEnabled` —— Turnstile 的挑战页在跨域 iframe 里
 ///   - `useWideViewPort` —— 站点模板是移动端优先的
-InAppWebViewSettings webViewSettings(String userAgent) =>
-    InAppWebViewSettings(
-      userAgent: userAgent,
-      // 默认 false。关着的话站点内的重定向会直接跑掉，
-      // 第三方页面一旦被引进来就能往 JS 通道里塞数据。
-      useShouldOverrideUrlLoading: true,
-      // 默认 false。Turnstile 有模式会**开新窗口**（先开隐藏窗再回填
-      // 结果），关着时那些窗口被静默拒掉，挑战就永远转不完。
-      javaScriptCanOpenWindowsAutomatically: true,
-    );
+InAppWebViewSettings webViewSettings(String userAgent) => InAppWebViewSettings(
+  userAgent: userAgent,
+  // 默认 false。关着的话站点内的重定向会直接跑掉，
+  // 第三方页面一旦被引进来就能往 JS 通道里塞数据。
+  useShouldOverrideUrlLoading: true,
+  // 默认 false。Turnstile 有模式会**开新窗口**（先开隐藏窗再回填
+  // 结果），关着时那些窗口被静默拒掉，挑战就永远转不完。
+  javaScriptCanOpenWindowsAutomatically: true,
+);
 
 /// 页面事件。内核回调统一转成这几个，界面层只认它们。
 class const WebViewEvents({
   /// 主框架开始加载。
   required this.onStarted,
+
   /// 主框架加载完成。
   required this.onFinished,
+
   /// 页面里的 JS 通过 `callHandler` 发来一条消息。
   required this.onMessage,
+
   /// 主框架加载失败。
   required this.onError,
+
   /// 导航请求。返回 false 拦截。
   required this.allowNavigation,
 }) {

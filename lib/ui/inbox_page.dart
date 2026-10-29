@@ -202,401 +202,396 @@ class _InboxPageState extends State<InboxPage> {
     await c.reload();
   }
 
-// ── 看门狗 ──────────────────────────────────────────────
+  // ── 看门狗 ──────────────────────────────────────────────
 
-/// 25 秒还没消息就提示一句。
-///
-/// 只提示，不重臂 —— 重臂会让它在弹层开着时空转不休眠（旧代码的问题）。
-/// 需要重臂的场景（换身份 / 重载）会显式调 [_armWatchdog]。
-void _armWatchdog() {
-  _watchdog?.cancel();
-  _watchdog = Timer(_watchdogAfter, _onWatchdog);
-}
-
-void _onWatchdog() {
-  final st = _store.state;
-  // 已经拿到消息、或已经明确失败 → 不需要这条提示。
-  if (!mounted || st.messages.isNotEmpty || st.phase == InboxPhase.failed) {
-    return;
+  /// 25 秒还没消息就提示一句。
+  ///
+  /// 只提示，不重臂 —— 重臂会让它在弹层开着时空转不休眠（旧代码的问题）。
+  /// 需要重臂的场景（换身份 / 重载）会显式调 [_armWatchdog]。
+  void _armWatchdog() {
+    _watchdog?.cancel();
+    _watchdog = Timer(_watchdogAfter, _onWatchdog);
   }
-  // 弹层开着时状态栏被站点页面盖住，这一响没人看得见 —— 留着下次再说。
-  if (_round.visible || st.hold != null) return;
-  _store.note(
-    st.hits == 0 ? '25 秒没截获到接口响应，可能卡在站点的人机验证。' : '截获到了接口，但里面没有消息。',
-  );
-}
 
-// ── 消息通道 ────────────────────────────────────────────
+  void _onWatchdog() {
+    final st = _store.state;
+    // 已经拿到消息、或已经明确失败 → 不需要这条提示。
+    if (!mounted || st.messages.isNotEmpty || st.phase == InboxPhase.failed) {
+      return;
+    }
+    // 弹层开着时状态栏被站点页面盖住，这一响没人看得见 —— 留着下次再说。
+    if (_round.visible || st.hold != null) return;
+    _store.note(st.hits == 0 ? '25 秒没截获到接口响应，可能卡在站点的人机验证。' : '截获到了接口，但里面没有消息。');
+  }
 
-void _onMessage(String channel, String payload) {
-  _store.ingest(payload);
-}
+  // ── 消息通道 ────────────────────────────────────────────
 
-// ── 翻页 ────────────────────────────────────────────────
+  void _onMessage(String channel, String payload) {
+    _store.ingest(payload);
+  }
 
-/// 用户滑到底了。
-Future<void> _loadMore() async {
-  final st = _store.state;
-  if (st.loadingMore || !st.hasMore) return;
+  // ── 翻页 ────────────────────────────────────────────────
 
-  _store.markLoadingMore();
-  _loadMoreTick?.cancel();
-  // 兜底：JS 可能因为拿不到号码 id、或注入没生效而一声不吭。
-  // 没有这道兜底，底部会一直转圈转到用户杀掉页面。
-  _loadMoreTick = Timer(_loadMoreTimeout, () {
-    if (!mounted) return;
-    _store.endLoadingMore();
-    _store.note('翻页超时，稍后再试。');
-  });
+  /// 用户滑到底了。
+  Future<void> _loadMore() async {
+    final st = _store.state;
+    if (st.loadingMore || !st.hasMore) return;
 
-  try {
-    await _controller?.evaluateJavascript(
-      source: 'window.__fusScannerApi && window.__fusScannerApi.loadMore();',
-    );
-  } catch (e) {
+    _store.markLoadingMore();
     _loadMoreTick?.cancel();
-    _store.endLoadingMore();
-    _store.note('翻页失败，稍后再试。');
+    // 兜底：JS 可能因为拿不到号码 id、或注入没生效而一声不吭。
+    // 没有这道兜底，底部会一直转圈转到用户杀掉页面。
+    _loadMoreTick = Timer(_loadMoreTimeout, () {
+      if (!mounted) return;
+      _store.endLoadingMore();
+      _store.note('翻页超时，稍后再试。');
+    });
+
+    try {
+      await _controller?.evaluateJavascript(
+        source: 'window.__fusScannerApi && window.__fusScannerApi.loadMore();',
+      );
+    } catch (e) {
+      _loadMoreTick?.cancel();
+      _store.endLoadingMore();
+      _store.note('翻页失败，稍后再试。');
+    }
   }
-}
 
-/// 让抓取层重扫一遍当前页面。
-Future<void> _rescan() async {
-  try {
-    await _controller?.evaluateJavascript(
-      source: 'window.__fusScannerApi && window.__fusScannerApi.rescan();',
-    );
-  } catch (e) {
-    // 页面还没就绪时抛是正常的，不是错误。
+  /// 让抓取层重扫一遍当前页面。
+  Future<void> _rescan() async {
+    try {
+      await _controller?.evaluateJavascript(
+        source: 'window.__fusScannerApi && window.__fusScannerApi.rescan();',
+      );
+    } catch (e) {
+      // 页面还没就绪时抛是正常的，不是错误。
+    }
   }
-}
 
-// ── 复制 ────────────────────────────────────────────────
+  // ── 复制 ────────────────────────────────────────────────
 
-Future<void> _copy(String text, String label) async {
-  await Clipboard.setData(ClipboardData(text: text));
-  if (!mounted) return;
-  final messenger = ScaffoldMessenger.of(context);
-  messenger
-    ..clearSnackBars()
-    ..showSnackBar(
-      SnackBar(
-        // **不把内容贴进提示** —— 复制整条短信时会糊满屏幕底部，
-        // 而用户刚刚就看着那条短信。只说「复制了什么」。
-        content: Text('已复制$label'),
-        duration: const Duration(milliseconds: 1200),
-      ),
-    );
-}
-
-// ── 界面 ────────────────────────────────────────────────
-
-@override
-Widget build(BuildContext context) {
-  final theme = Theme.of(context);
-  final st = _store.state;
-
-  return Scaffold(
-    appBar: _round.visible
-        ? null
-        : AppBar(
-            title: Text(widget.title),
-            actions: [
-              IconButton(
-                tooltip: '重新加载',
-                onPressed: _reload,
-                icon: const Icon(Icons.refresh),
-              ),
-            ],
-          ),
-    body: Stack(
-      children: [
-        // 界面层。铺满，永远可见。
-        _body(st, theme),
-
-        // 引擎层。整个页面树里**只有这一个** WebView。
-        //
-        // 用 Visibility + maintainSize，**不是 Offstage**。
-        //
-        // Offstage 会让子树不参与布局（尺寸变 0），而这里包的是原生
-        // `InAppWebView` —— 它不是 Flutter 绘制的纹理，视口是 0×0 时
-        // 页面照样「加载成功」，但什么都画不出来。真机表现就是
-        // **打开收件页一片空白**，而 JS 其实在跑、消息其实在抓。
-        Positioned.fill(
-          child: Visibility(
-            visible: _round.visible,
-            maintainSize: true,
-            maintainAnimation: true,
-            maintainState: true,
-            child: ColoredBox(
-              // 引擎看不见 Flutter 的背景，给个深色免得加载瞬间闪白。
-              color: const Color(0xFF10131A),
-              child: _ready
-                  ? buildWebView(
-                      key: _key,
-                      userAgent: currentUserAgent,
-                      scripts: [
-                        // 抓取层必须在**任何页面脚本之前**装好 ——
-                        // 站点自己的脚本一进来就会读 navigator。
-                        UserScript(
-                          source: _scannerScript,
-                          injectionTime:
-                              UserScriptInjectionTime.AT_DOCUMENT_START,
-                        ),
-                      ],
-                      events: WebViewEvents(
-                        onStarted: _onPageStarted,
-                        onFinished: _onPageFinished,
-                        onMessage: _onMessage,
-                        onError: _onError,
-                        allowNavigation: _allowNavigation,
-                      ),
-                      onCreated: (c) => _controller = c,
-                    )
-                  : const SizedBox.shrink(),
-            ),
-          ),
+  Future<void> _copy(String text, String label) async {
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger
+      ..clearSnackBars()
+      ..showSnackBar(
+        SnackBar(
+          // **不把内容贴进提示** —— 复制整条短信时会糊满屏幕底部，
+          // 而用户刚刚就看着那条短信。只说「复制了什么」。
+          content: Text('已复制$label'),
+          duration: const Duration(milliseconds: 1200),
         ),
-
-        // 验证界面的标题栏。顶在 SafeArea 上沿。
-        if (_round.visible)
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: _challengeHeader(theme),
-          ),
-
-        // 用户自己点开验证时的底栏。
-        if (_round.visible && !_round.auto)
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: _challengeBar(theme),
-          ),
-      ],
-    ),
-  );
-}
-
-Widget _body(InboxState st, ThemeData theme) {
-  if (st.messages.isNotEmpty) {
-    return NotificationListener<ScrollNotification>(
-      onNotification: (n) {
-        // 快到底了就拉下一页（留 300px 余量，让加载在用户滑到之前开始）。
-        if (n.metrics.pixels >= n.metrics.maxScrollExtent - 300) {
-          unawaited(_loadMore());
-        }
-        return false;
-      },
-      child: ListView.builder(
-        controller: _scroll,
-        padding: const EdgeInsets.only(top: 6, bottom: 24),
-        itemCount: st.shown.length + 1,
-        itemBuilder: (context, i) {
-          if (i == st.shown.length) return _footer(st, theme);
-          final m = st.shown[i];
-          return MessageCard(
-            message: m,
-            theme: theme,
-            onCopyCode: (c) => _copy(c, '验证码'),
-            onCopyAll: (msg) => _copy(msg.text, '整条短信'),
-          );
-        },
-      ),
-    );
+      );
   }
-  return _emptyState(st, theme);
-}
 
-Widget _footer(InboxState st, ThemeData theme) {
-  if (st.loadingMore) {
-    return const Padding(
-      padding: EdgeInsets.symmetric(vertical: 16),
-      child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
-    );
-  }
-  return Padding(
-    padding: const EdgeInsets.symmetric(vertical: 16),
-    child: Center(
-      child: Text(
-        st.hasMore ? '滑到底加载更早的消息' : '没有更早的消息了',
-        style: theme.textTheme.bodySmall?.copyWith(
-          color: theme.colorScheme.onSurfaceVariant,
-        ),
-      ),
-    ),
-  );
-}
+  // ── 界面 ────────────────────────────────────────────────
 
-/// 没有消息时显示什么。
-///
-/// 三种情况分开说 —— 它们的含义和用户能做的事完全不同：
-///   - 站点拒绝 → 说清是哪种拒绝、要不要换号
-///   - 我们这边失败 → 说清原因、给重试按钮
-///   - 在等 → 转圈 + 状态栏那行字
-Widget _emptyState(InboxState st, ThemeData theme) {
-  final scheme = theme.colorScheme;
-  final hold = st.hold;
-  return Center(
-    child: Padding(
-      padding: const EdgeInsets.all(28),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (hold != null) ...[
-            Icon(
-              switch (hold.kind) {
-                HoldKind.quota => Icons.hourglass_disabled,
-                HoldKind.challenge => Icons.shield_outlined,
-                HoldKind.temporary => Icons.cloud_queue,
-              },
-              size: 40,
-              color: scheme.tertiary,
-            ),
-            const SizedBox(height: 14),
-            Text(
-              hold.title.isNotEmpty ? hold.title : _holdTitle(hold.kind),
-              style: theme.textTheme.titleMedium,
-              textAlign: TextAlign.center,
-            ),
-            if (hold.message.isNotEmpty) ...[
-              const SizedBox(height: 6),
-              Text(
-                hold.message,
-                style: theme.textTheme.bodySmall,
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ] else if (st.phase == InboxPhase.failed) ...[
-            Icon(Icons.cloud_off, size: 40, color: scheme.error),
-            const SizedBox(height: 14),
-            Text(
-              st.error,
-              style: theme.textTheme.bodyMedium,
-              textAlign: TextAlign.center,
-            ),
-          ] else ...[
-            const SizedBox(
-              width: 26,
-              height: 26,
-              child: CircularProgressIndicator(strokeWidth: 2.4),
-            ),
-          ],
-          const SizedBox(height: 16),
-          Text(
-            st.status,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: scheme.onSurfaceVariant,
-            ),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 14),
-          Wrap(
-            spacing: 8,
-            children: [
-              if (st.phase == InboxPhase.failed)
-                FilledButton.tonalIcon(
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final st = _store.state;
+
+    return Scaffold(
+      appBar: _round.visible
+          ? null
+          : AppBar(
+              title: Text(widget.title),
+              actions: [
+                IconButton(
+                  tooltip: '重新加载',
                   onPressed: _reload,
-                  icon: const Icon(Icons.refresh, size: 18),
-                  label: const Text('重试'),
-                ),
-              if (hold?.kind == HoldKind.challenge)
-                FilledButton.tonalIcon(
-                  onPressed: () => _openChallenge(auto: false),
-                  icon: const Icon(Icons.shield_outlined, size: 18),
-                  label: const Text('自己过验证'),
-                ),
-              TextButton(
-                onPressed: _rescan,
-                child: const Text('再扫一次'),
-              ),
-            ],
-          ),
-        ],
-      ),
-    ),
-  );
-}
-
-String _holdTitle(HoldKind kind) => switch (kind) {
-  HoldKind.quota => '这个出口的额度用完了',
-  HoldKind.challenge => '需要先过人机验证',
-  HoldKind.temporary => '站点这会儿有点忙',
-};
-
-/// 验证界面的标题栏。
-///
-/// 自动弹和用户自己点，副标题不一样 —— 前者要告诉他「过完会自动继续」，
-/// 后者要告诉他「过完点按钮」。
-Widget _challengeHeader(ThemeData theme) => Material(
-  color: theme.colorScheme.surface,
-  elevation: 2,
-  child: SafeArea(
-    bottom: false,
-    child: SizedBox(
-      height: 52,
-      child: Row(
-        children: [
-          const SizedBox(width: 4),
-          IconButton(
-            tooltip: '关闭验证',
-            onPressed: _closeChallenge,
-            icon: const Icon(Icons.close),
-          ),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text('完成人机验证', style: theme.textTheme.titleMedium),
-                Text(
-                  _round.auto
-                      ? '这个出口站点要求先过验证。过完会自动继续。'
-                      : '在页面里完成验证；过完点底部的「验证好了」。',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
+                  icon: const Icon(Icons.refresh),
                 ),
               ],
             ),
-          ),
-          const SizedBox(width: 10),
-        ],
-      ),
-    ),
-  ),
-);
-
-Widget _challengeBar(ThemeData theme) => Material(
-  color: theme.colorScheme.surfaceContainerHigh,
-  elevation: 4,
-  child: SafeArea(
-    top: false,
-    child: Padding(
-      padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
-      child: Row(
+      body: Stack(
         children: [
-          Expanded(
-            child: Text(
-              '在上面完成验证。过完点「验证好了」。',
-              style: theme.textTheme.bodySmall,
+          // 界面层。铺满，永远可见。
+          _body(st, theme),
+
+          // 引擎层。整个页面树里**只有这一个** WebView。
+          //
+          // 用 Visibility + maintainSize，**不是 Offstage**。
+          //
+          // Offstage 会让子树不参与布局（尺寸变 0），而这里包的是原生
+          // `InAppWebView` —— 它不是 Flutter 绘制的纹理，视口是 0×0 时
+          // 页面照样「加载成功」，但什么都画不出来。真机表现就是
+          // **打开收件页一片空白**，而 JS 其实在跑、消息其实在抓。
+          Positioned.fill(
+            child: Visibility(
+              visible: _round.visible,
+              maintainSize: true,
+              maintainAnimation: true,
+              maintainState: true,
+              child: ColoredBox(
+                // 引擎看不见 Flutter 的背景，给个深色免得加载瞬间闪白。
+                color: const Color(0xFF10131A),
+                child: _ready
+                    ? buildWebView(
+                        key: _key,
+                        userAgent: currentUserAgent,
+                        scripts: [
+                          // 抓取层必须在**任何页面脚本之前**装好 ——
+                          // 站点自己的脚本一进来就会读 navigator。
+                          UserScript(
+                            source: _scannerScript,
+                            injectionTime:
+                                UserScriptInjectionTime.AT_DOCUMENT_START,
+                          ),
+                        ],
+                        events: WebViewEvents(
+                          onStarted: _onPageStarted,
+                          onFinished: _onPageFinished,
+                          onMessage: _onMessage,
+                          onError: _onError,
+                          allowNavigation: _allowNavigation,
+                        ),
+                        onCreated: (c) => _controller = c,
+                      )
+                    : const SizedBox.shrink(),
+              ),
             ),
           ),
-          TextButton(onPressed: _closeChallenge, child: const Text('收起')),
-          const SizedBox(width: 4),
-          FilledButton(
-            onPressed: _confirmChallengeDone,
-            child: const Text('验证好了'),
-          ),
+
+          // 验证界面的标题栏。顶在 SafeArea 上沿。
+          if (_round.visible)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: _challengeHeader(theme),
+            ),
+
+          // 用户自己点开验证时的底栏。
+          if (_round.visible && !_round.auto)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: _challengeBar(theme),
+            ),
         ],
       ),
+    );
+  }
+
+  Widget _body(InboxState st, ThemeData theme) {
+    if (st.messages.isNotEmpty) {
+      return NotificationListener<ScrollNotification>(
+        onNotification: (n) {
+          // 快到底了就拉下一页（留 300px 余量，让加载在用户滑到之前开始）。
+          if (n.metrics.pixels >= n.metrics.maxScrollExtent - 300) {
+            unawaited(_loadMore());
+          }
+          return false;
+        },
+        child: ListView.builder(
+          controller: _scroll,
+          padding: const EdgeInsets.only(top: 6, bottom: 24),
+          itemCount: st.shown.length + 1,
+          itemBuilder: (context, i) {
+            if (i == st.shown.length) return _footer(st, theme);
+            final m = st.shown[i];
+            return MessageCard(
+              message: m,
+              theme: theme,
+              onCopyCode: (c) => _copy(c, '验证码'),
+              onCopyAll: (msg) => _copy(msg.text, '整条短信'),
+            );
+          },
+        ),
+      );
+    }
+    return _emptyState(st, theme);
+  }
+
+  Widget _footer(InboxState st, ThemeData theme) {
+    if (st.loadingMore) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 16),
+        child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 16),
+      child: Center(
+        child: Text(
+          st.hasMore ? '滑到底加载更早的消息' : '没有更早的消息了',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 没有消息时显示什么。
+  ///
+  /// 三种情况分开说 —— 它们的含义和用户能做的事完全不同：
+  ///   - 站点拒绝 → 说清是哪种拒绝、要不要换号
+  ///   - 我们这边失败 → 说清原因、给重试按钮
+  ///   - 在等 → 转圈 + 状态栏那行字
+  Widget _emptyState(InboxState st, ThemeData theme) {
+    final scheme = theme.colorScheme;
+    final hold = st.hold;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (hold != null) ...[
+              Icon(
+                switch (hold.kind) {
+                  HoldKind.quota => Icons.hourglass_disabled,
+                  HoldKind.challenge => Icons.shield_outlined,
+                  HoldKind.temporary => Icons.cloud_queue,
+                },
+                size: 40,
+                color: scheme.tertiary,
+              ),
+              const SizedBox(height: 14),
+              Text(
+                hold.title.isNotEmpty ? hold.title : _holdTitle(hold.kind),
+                style: theme.textTheme.titleMedium,
+                textAlign: TextAlign.center,
+              ),
+              if (hold.message.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Text(
+                  hold.message,
+                  style: theme.textTheme.bodySmall,
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ] else if (st.phase == InboxPhase.failed) ...[
+              Icon(Icons.cloud_off, size: 40, color: scheme.error),
+              const SizedBox(height: 14),
+              Text(
+                st.error,
+                style: theme.textTheme.bodyMedium,
+                textAlign: TextAlign.center,
+              ),
+            ] else ...[
+              const SizedBox(
+                width: 26,
+                height: 26,
+                child: CircularProgressIndicator(strokeWidth: 2.4),
+              ),
+            ],
+            const SizedBox(height: 16),
+            Text(
+              st.status,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 8,
+              children: [
+                if (st.phase == InboxPhase.failed)
+                  FilledButton.tonalIcon(
+                    onPressed: _reload,
+                    icon: const Icon(Icons.refresh, size: 18),
+                    label: const Text('重试'),
+                  ),
+                if (hold?.kind == HoldKind.challenge)
+                  FilledButton.tonalIcon(
+                    onPressed: () => _openChallenge(auto: false),
+                    icon: const Icon(Icons.shield_outlined, size: 18),
+                    label: const Text('自己过验证'),
+                  ),
+                TextButton(onPressed: _rescan, child: const Text('再扫一次')),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _holdTitle(HoldKind kind) => switch (kind) {
+    HoldKind.quota => '这个出口的额度用完了',
+    HoldKind.challenge => '需要先过人机验证',
+    HoldKind.temporary => '站点这会儿有点忙',
+  };
+
+  /// 验证界面的标题栏。
+  ///
+  /// 自动弹和用户自己点，副标题不一样 —— 前者要告诉他「过完会自动继续」，
+  /// 后者要告诉他「过完点按钮」。
+  Widget _challengeHeader(ThemeData theme) => Material(
+    color: theme.colorScheme.surface,
+    elevation: 2,
+    child: SafeArea(
+      bottom: false,
+      child: SizedBox(
+        height: 52,
+        child: Row(
+          children: [
+            const SizedBox(width: 4),
+            IconButton(
+              tooltip: '关闭验证',
+              onPressed: _closeChallenge,
+              icon: const Icon(Icons.close),
+            ),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text('完成人机验证', style: theme.textTheme.titleMedium),
+                  Text(
+                    _round.auto
+                        ? '这个出口站点要求先过验证。过完会自动继续。'
+                        : '在页面里完成验证；过完点底部的「验证好了」。',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+          ],
+        ),
+      ),
     ),
-  ),
-);
+  );
+
+  Widget _challengeBar(ThemeData theme) => Material(
+    color: theme.colorScheme.surfaceContainerHigh,
+    elevation: 4,
+    child: SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                '在上面完成验证。过完点「验证好了」。',
+                style: theme.textTheme.bodySmall,
+              ),
+            ),
+            TextButton(onPressed: _closeChallenge, child: const Text('收起')),
+            const SizedBox(width: 4),
+            FilledButton(
+              onPressed: _confirmChallengeDone,
+              child: const Text('验证好了'),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
 
   // ── 页面事件 ────────────────────────────────────────────
 
@@ -630,7 +625,8 @@ Widget _challengeBar(ThemeData theme) => Material(
   /// 不该有的攻击面。
   bool _allowNavigation(String url) {
     final host = Uri.tryParse(url)?.host ?? '';
-    return host == widget.allowedHost || host.endsWith('.${widget.allowedHost}');
+    return host == widget.allowedHost ||
+        host.endsWith('.${widget.allowedHost}');
   }
 
   // ── 验证界面开关 ────────────────────────────────────────
@@ -668,12 +664,13 @@ Widget _challengeBar(ThemeData theme) => Material(
     _loadMoreTick?.cancel();
     _store.reset();
     try {
-      await _controller?.loadUrl(urlRequest: URLRequest(url: WebUri(widget.inboxUrl)));
+      await _controller?.loadUrl(
+        urlRequest: URLRequest(url: WebUri(widget.inboxUrl)),
+      );
     } catch (e) {
       _store.note('重新加载失败，请再点一次。');
     }
     _armWatchdog();
     _startVerifyTick();
   }
-
 }

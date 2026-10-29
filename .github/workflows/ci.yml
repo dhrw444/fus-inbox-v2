@@ -1,0 +1,41 @@
+name: CI
+
+# 只跑「不需要真机」的检查。
+#
+# 这里**不跑** `flutter build apk` —— 出包是另一条流水线的事，而
+# 每次 push 都出包既慢又浪费。这一条只要保证：类型对、格式对、
+# 纯逻辑测试过。
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: 装依赖
+        run: flutter pub get
+
+      # 纯逻辑测试。**这一条最有价值** —— 132 个断言覆盖的正是
+      # 旧代码里那些「只能靠读代码看着对」的判断。
+      - name: 纯逻辑测试
+        run: dart run tool/rewrite_test.dart
+
+      # 抓取脚本的语法。JS 出错不会让 Dart 编译失败，只会在真机上
+      # 静默什么都不做 —— 所以必须单独查。
+      - name: JS 语法
+        run: node --check assets/scanner.js
+
+      - name: 类型检查
+        run: flutter analyze --fatal-infos
+
+      - name: 格式
+        run: dart format --output=none --set-exit-if-changed lib tool
