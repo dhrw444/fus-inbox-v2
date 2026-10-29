@@ -48,8 +48,11 @@ Future<void> _bootstrap() async {
 }
 
 /// 启动失败时显示的东西。
-class const _StartupFailed({required this.message, super.key})
-    extends StatelessWidget {
+///
+/// **私有 widget 不加 `super.key`** —— 它在外面只被 new 一次、从不传 key，
+/// 加了会被 `unused_element_parameter` 判成「参数从没被给过值」。
+/// （`use_key_in_widget_constructors` 只管公开 widget。）
+class const _StartupFailed({required this.message}) extends StatelessWidget {
   final String message;
 
   @override
