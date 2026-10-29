@@ -11,3 +11,12 @@ android/local.properties
 android/app/debug/
 android/app/profile/
 android/app/release/
+
+# ── 签名密钥，永远不进仓库 ──
+#
+# android/.gitignore 里也有这几条，这里是第二道。**重复不是冗余**：
+# 那道防的是「在 android/ 下随手放一个」，这道防的是「在根目录下放」。
+# 签名密钥泄漏 = 任何人都能签出和你一模一样的包，而安卓分不出来。
+*.jks
+*.keystore
+key.properties

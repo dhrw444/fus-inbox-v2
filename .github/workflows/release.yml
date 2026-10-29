@@ -85,18 +85,54 @@ jobs:
             echo "::warning::没有 KEYSTORE_BASE64，这个包是 unsigned 的"
           fi
 
-      - name: 写入 key.properties
+      - name: 写入密钥库与 key.properties
         env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
-          if [ -n "${KEYSTORE_PASSWORD:-}" ]; then
-            printf 'storePassword=%s\nkeyPassword=%s\nkeyAlias=%s\nstoreFile=my-release-key.keystore\n' \
-              "$KEYSTORE_PASSWORD" "$KEY_PASSWORD" "$KEY_ALIAS" > android/key.properties
-          else
-            echo "::warning::没有签名密码，这个包是 unsigned 的"
+          set -euo pipefail
+          # 四个 secret 缺一个就不签 —— 半套凭据只会让 gradle 报错，
+          # 不如明确走 unsigned。
+          missing=''
+          [ -n "${KEYSTORE_BASE64:-}" ] || missing="$missing KEYSTORE_BASE64"
+          [ -n "${KEYSTORE_PASSWORD:-}" ] || missing="$missing KEYSTORE_PASSWORD"
+          [ -n "${KEY_PASSWORD:-}" ] || missing="$missing KEY_PASSWORD"
+          [ -n "${KEY_ALIAS:-}" ] || missing="$missing KEY_ALIAS"
+
+          if [ -n "$missing" ]; then
+            echo "::warning::缺少 secret:$missing —— 这个包是 unsigned 的，装不上"
+            exit 0
           fi
+
+          # **密钥库要真写到磁盘上。** storeFile 是相对 android/ 的路径，
+          # 所以文件必须落在 android/ 下 —— 写别处 gradle 会说找不到。
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > android/my-release-key.keystore
+
+          # 密码里可能有 = 或反斜杠，用 printf 拼会坏。改成逐行 echo，
+          # 引号包住变量，shell 不做二次解析。
+          {
+            echo "storePassword=$KEYSTORE_PASSWORD"
+            echo "keyPassword=$KEY_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "storeFile=my-release-key.keystore"
+          } > android/key.properties
+
+          # 校验：字节数非零、能认出是密钥库（PKCS12 的魔数是 0x3082…）
+          size=$(stat -c%s android/my-release-key.keystore)
+          if [ "$size" -lt 1000 ]; then
+            echo "::error::密钥库只有 $size 字节，base64 解码可能失败了"
+            exit 1
+          fi
+          echo "密钥库写入成功：$size 字节"
+
+          # key.properties 不该带引号或空白 —— gradle 读的是裸值。
+          if grep -q '"' android/key.properties; then
+            echo "::error::key.properties 里混进了引号"
+            exit 1
+          fi
+          echo "key.properties 写入成功"
 
       - name: 构建
         run: bash tool/build_release_apks.sh "$RELEASE_VERSION" "$RELEASE_BUILD_NUMBER"
