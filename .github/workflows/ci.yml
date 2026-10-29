@@ -9,6 +9,10 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  # 让 release.yml 能 `uses: ./.github/workflows/ci.yml` 复用这一段。
+  # **少了这一行，那条引用会在解析阶段就失败**，而且报错信息是
+  # 「workflow is not reusable」，不会指向真正缺的东西。
+  workflow_call:
 
 jobs:
   verify:
@@ -39,6 +43,12 @@ jobs:
       # 而不是悄悄直连」—— 那条退化了就是静默泄漏真实 IP，界面上看不出来。
       - name: 目录抓取测试
         run: dart run tool/fetch_test.dart
+
+      # 版本号校验就是发版门禁：它放过畸形版本号，整条出包流水线就带着
+      # 坏版本号跑。而坏版本号不会让构建失败，只会让装上去的包看起来是新的、
+      # 实际是旧的（versionCode 没涨，安卓直接不让覆盖安装）。
+      - name: 版本号校验测试
+        run: dart run tool/release_version_test.dart
 
       # 抓取脚本的语法。JS 出错不会让 Dart 编译失败，只会在真机上
       # 静默什么都不做 —— 所以必须单独查。

@@ -1,0 +1,136 @@
+name: Release
+
+# 出包。只在 main 上推、或者手动触发时跑。
+#
+# **手动触发必填版本号**，push 触发时用 pubspec 里现有的版本 + run_number
+# 作为构建号 —— 这样每次 push 出的包 versionCode 一定往上走，不会因为
+# 版本号没改而被安卓拒绝覆盖安装。
+on:
+  workflow_dispatch:
+    inputs:
+      version_name:
+        description: "版本号（semver，例如 1.0.0 或 0.1.0-rc.1）"
+        required: true
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  build-release:
+    name: 出签名 APK
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      prerelease: ${{ steps.release_version.outputs.prerelease }}
+      version: ${{ steps.release_version.outputs.version }}
+    env:
+      # 手动触发必须给版本号；push 触发时从 pubspec 的 version 行取主版本部分。
+      RELEASE_VERSION: ${{ inputs.version_name || '0.1.0' }}
+      RELEASE_BUILD_NUMBER: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: 装 Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: "3.47.5"
+          cache: true
+
+      - name: 装 Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: "17"
+          cache: gradle
+
+      # **不用 `--enforce-lockfile`。**
+      #
+      # 那个开关会因为「本地和 CI 的 SDK 版本不同」而假失败：被 SDK 钉死的
+      # 包（例如 test_api）两边版本不一样，它就报「Would change N dependencies」。
+      # 出包不该被这个卡住 —— 真正的依赖一致性由 pubspec.lock 提交进仓库
+      # 本身保证。
+      - name: 装依赖
+        run: flutter pub get
+
+      - name: 写入版本号
+        id: release_version
+        run: |
+          dart run tool/set_release_version.dart "$RELEASE_VERSION" "$RELEASE_BUILD_NUMBER"
+          # 版本号写回 pubspec 之后从那儿读，保证 GITHUB_OUTPUT 里的是真值
+          # 而不是用户输入的原样 —— 输入 `1.2.3` 和写进去的必须是同一个。
+          v=$(sed -n 's/^version: //p' pubspec.yaml)
+          echo "version=${v%%+*}" >> "$GITHUB_OUTPUT"
+
+      - name: 解码签名密钥
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          # 没有这个 secret 时不失败 —— 那样脚本会出 unsigned 包并明确说出来。
+          # 但在这里就不写 keystore 了，免得 base64 -d 空输入造出一个坏文件。
+          if [ -n "${KEYSTORE_BASE64:-}" ]; then
+            printf '%s' "$KEYSTORE_BASE64" | base64 --decode > android/app/my-release-key.keystore
+          else
+            echo "::warning::没有 KEYSTORE_BASE64，这个包是 unsigned 的"
+          fi
+
+      - name: 写入 key.properties
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          if [ -n "${KEYSTORE_PASSWORD:-}" ]; then
+            printf 'storePassword=%s\nkeyPassword=%s\nkeyAlias=%s\nstoreFile=my-release-key.keystore\n' \
+              "$KEYSTORE_PASSWORD" "$KEY_PASSWORD" "$KEY_ALIAS" > android/key.properties
+          else
+            echo "::warning::没有签名密码，这个包是 unsigned 的"
+          fi
+
+      - name: 构建
+        run: bash tool/build_release_apks.sh "$RELEASE_VERSION" "$RELEASE_BUILD_NUMBER"
+
+      - name: 检查产物
+        run: |
+          set -euo pipefail
+          apk=build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+          if [ ! -f "$apk" ]; then
+            echo "::error::没生成 $apk"
+            ls -la build/app/outputs/flutter-apk/ || true
+            exit 1
+          fi
+          echo "产物 $apk：$(stat -c%s "$apk") 字节"
+          # 符号表也要有 —— 混淆之后没有它，线上崩溃栈没法看。
+          if [ ! -d build/debug-info ]; then
+            echo "::error::没生成符号表 build/debug-info"
+            exit 1
+          fi
+          ls build/debug-info
+
+      - name: 上传 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-apk-${{ github.run_id }}
+          path: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      # 符号表单独存：它不该进 Release（体积大且敏感），但排查线上崩溃要用。
+      - name: 上传符号表
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-symbols-${{ github.run_id }}
+          path: build/debug-info
+          if-no-files-found: error
+          retention-days: 90
