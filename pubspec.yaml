@@ -1,51 +1,44 @@
 name: fus_inbox
-description: "查看公共美国号码池的最新短信，可选号、可按州与区号筛选"
+description: "查看公共号码池的最新短信。可选号，可按州与区号筛选。"
 publish_to: "none"
+
+# 版本号只用于本地调试；CI 出包时会覆盖它（见 .github/workflows）。
 version: 0.1.0+1
 
 environment:
-  sdk: ^3.13.0
+  sdk: ^3.9.0
   flutter: ">=3.47.5"
 
 dependencies:
-  dynamic_color: ^2.1.0
   flutter:
     sdk: flutter
-  material_ui: ^1.7.0
-  material_3_expressive: ^1.1.7
-  material_color_utilities: ^0.13.0
-  # 注意：这里**不要**加 meta。
-  #
-  # 曾经为了 `@internal` 标注而直接依赖它，那些标注后来全删了 —— `@internal`
-  # 只对「公开包的私有 API」有意义，本应用 `publish_to: none`、没有对外 API 面，
-  # 标上去 analyzer 反而报 `invalid_internal_annotation`。本仓也不需要
-  # `@visibleForTesting`（仅有的两处标在了生产代码实际在用的成员上，是假的）。
-  # 一个包覆盖 Android / iOS / macOS / Windows / Linux / Web。
-  #
-  # 为什么不是 webview_flutter：它到 4.14.1（2026-07）仍然只有
-  # android / ios / macos —— **没有 Windows 实现**，而且官方一直没有。
-  # 我们要 Windows x86，所以必须换。
-  #
-  # 为什么是 beta：Windows 支持（flutter_inappwebview_windows）目前只在
-  # beta 线上。这不是赌 —— `hikari_novel_flutter`（431 star、MIT、
-  # 2026-10 仍在更新）就用这个版本在六个平台上发成品，windows/ 目录是
-  # 纯生成的标准 runner，零自定义平台代码。
-  #
-  # 顺带解决两件事：
-  #   1. 插件自带 `ProxyController`（Android），可以删掉我们手写的
-  #      `ProxyControllerBridge.kt`；
-  #   2. `WebViewEnvironmentSettings.additionalBrowserArguments` 就是
-  #      WebView2 的 `--proxy-server`，Windows 代理不用自己搭通道。
+
+  # WebView。整个抓取层的立足点 —— 站点要求页面上下文里签名，
+  # 用 `dart:io` 直接打接口拿不到数据。
   flutter_inappwebview: ^6.2.0-beta.3
-  pub_semver: ^2.2.1
-  shared_preferences: ^2.5.6
+
+  # 说明：**只留真正用到的**。
+  #
+  # 旧项目那份 pubspec 里有 8 个依赖，其中 6 个（dynamic_color /
+  # material_ui / material_3_expressive / material_color_utilities /
+  # pub_semver / shared_preferences）在本项目里一次都没 import。
+  # 而「多一个依赖」不只是多一份体积 —— 它多一层版本约束、多一处
+  # 「为什么会有这个包」的疑问。用到再加。
 
 dev_dependencies:
-
-  # 测试。纯逻辑那部分不需要它（`dart run tool/rewrite_test.dart` 直接跑），
-  # 但 widget 测试要。
   flutter_test:
     sdk: flutter
 
-  # lint 规则集。`analysis_options.yaml` 里 include 的就是它。
+  # lint 规则集，`analysis_options.yaml` 里 include 的就是它。
   flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    # 抓取脚本。注入到站点页面里，负责挂钩接口 + 扫 DOM。
+    - assets/scanner.js
+    # 内置代理清单（一行一个出口）。
+    - assets/proxies/
+    # 应用图标。
+    - assets/icon/icon.png

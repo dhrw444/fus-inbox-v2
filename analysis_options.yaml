@@ -1,30 +1,91 @@
+# 本项目的分析规则。
+#
+# ## 为什么不用旧项目那份
+#
+# 旧项目那份是**为旧代码量身定做的** —— 里面挂着 riverpod 的插件配置
+# （`plugins: riverpod_lint`），而本项目压根不用 Riverpod。整体复制过来
+# 之后，`missing_provider_scope` 一直报，白跑三轮 CI。
+#
+# 这份是从「本项目要什么」出发写的，不是从旧项目抄的。
+#
+# ## 原则
+#
+# 规则分三档：
+#   1. **能抓真问题的** —— 全开，哪怕严苛
+#   2. **统一的写法** —— 全开，本仓库只有一种写法
+#   3. **个人偏好** —— 不开
 include: package:flutter_lints/flutter.yaml
 
-linter:
-  rules:
-    - use_super_parameters
-    - prefer_const_declarations
-    - unnecessary_lambdas
-    - avoid_redundant_argument_values
-    - prefer_final_locals
-    - no_raw_types
-    - no_dynamic_casts
-    - simple_directive_paths
-    - use_primary_constructors
-
 analyzer:
+  # 这几条不是 lint，是**类型系统的档位**。
+  #
+  # `strict-casts` 会让 `dynamic` 不能悄悄流进有类型的变量 —— 旧代码
+  # 里 `Cookie.value`（dynamic）直接进 `Map<String,String>` 就是这么埋下
+  # 的。开了它这一类必须在代码里显式转。
   language:
     strict-casts: true
     strict-inference: true
     strict-raw-types: true
+
+  errors:
+    # 未使用的 import / 变量 / 参数 —— 一律当错误。
+    #
+    # 它们是真问题：死 import 会让「这段代码还用不用那个模块」变成
+    # 需要人肉追的事，而旧项目里正是靠 CI 才发现的。
+    unused_import: error
+    unused_local_variable: error
+    unused_element: error
+    unused_element_parameter: error
+    unused_field: error
+
+    # 死代码。
+    dead_code: error
+    unreachable_switch_default: error
+
   exclude:
-    - build/**
-    # tool/ 下是手跑的实测脚本，靠 print 出结果，不是产品代码。
-    # 不排掉的话 CI 的 --fatal-infos 会把每一条 print 都当失败。
-    - tool/**
+    # 生成的与平台模板的，不是我们写的。
     - android/**
     - ios/**
     - web/**
     - windows/**
     - macos/**
     - linux/**
+    # 工具脚本不进 App，规则可以松一点。
+    # 不排掉的话 CI 的 --fatal-infos 会把每一条 print 都当失败。
+    - tool/**
+
+linter:
+  rules:
+    # ── 统一的写法 ──────────────────────────────────────────
+    #
+    # 本仓库的方言是**主构造器**：
+    #
+    #     class const Foo({required this.x}) extends StatelessWidget {...}
+    #
+    # 不是传统构造器。混用会让文件之间读起来像两个项目。
+    use_primary_constructors: true
+    use_super_parameters: true
+
+    # widget 的 key 必须能传（私有 widget 除外 —— 那条由
+    # `unused_element_parameter` 管，加了又没人传反而报错）。
+    use_key_in_widget_constructors: true
+
+    # ── 能抓真问题的 ────────────────────────────────────────
+    #
+    # 传了等于默认值的参数 —— 读代码的人会以为那是在改行为。
+    avoid_redundant_argument_values: true
+    # 能 const 就 const。不只是性能，是**意图**：const 说明这个值
+    # 不随运行时变。
+    prefer_const_constructors: true
+    prefer_const_declarations: true
+    # 不必要的 late。late 是「我保证赋值前不用」，滥用会掩盖初始化顺序
+    # 问题 —— 旧项目的闪退正是 late final 在赋值前被读。
+    unnecessary_late: true
+    # 空 catch。要么处理，要么在注释里说明为什么可以忽略。
+    empty_catches: true
+    # 异步里用已失效的 context。
+    use_build_context_synchronously: true
+    # 用了 dynamic 而不声明。
+    avoid_dynamic_calls: true
+    # 返回 Future 却没 await —— 静默吞异常的主要来源。
+    unawaited_futures: false

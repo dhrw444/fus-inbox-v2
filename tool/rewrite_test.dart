@@ -22,6 +22,7 @@ import '../lib/core/code_extract.dart';
 import '../lib/core/sms_message.dart';
 import '../lib/core/user_agent.dart';
 import '../lib/data/frame.dart';
+import '../lib/data/proxy_config.dart';
 import '../lib/data/inbox_state.dart';
 import '../lib/data/inbox_store.dart';
 import '../lib/data/verify_round.dart';
@@ -54,6 +55,7 @@ void main() {
   _testVerify();
   _testStore();
   _testUserAgent();
+  _testProxy();
   print('\n$_pass passed, $_fail failed');
   if (_fail > 0) throw StateError('$_fail failed');
 }
@@ -642,5 +644,74 @@ void _testUserAgent() {
     final before = currentIdentity.userAgent;
     bootstrapUserAgent('');
     _eq('空串不动', currentIdentity.userAgent, before);
+  }
+}
+
+void _testProxy() {
+  // ── 完整形式 ──
+  {
+    final c = parseProxyLine('socks5://1.2.3.4:1080')!;
+    _eq('协议', c.scheme, ProxyScheme.socks5);
+    _eq('主机', c.host, '1.2.3.4');
+    _eq('端口', c.port, 1080);
+    _ok('没凭据', !c.hasAuth);
+    _eq('id 不含密码', c.id, 'socks5://1.2.3.4:1080');
+  }
+
+  // ── 带凭据 ──
+  {
+    final c = parseProxyLine('http://u:p@1.2.3.4:8080')!;
+    _eq('协议', c.scheme, ProxyScheme.http);
+    _eq('用户名', c.user, 'u');
+    _eq('密码', c.password, 'p');
+    _ok('有凭据', c.hasAuth);
+  }
+
+  // ── 密码里带 @ 和 : ──
+  {
+    final c = parseProxyLine('socks5://u:p@ss:w0rd@1.2.3.4:1080')!;
+    _eq('取最后一个 @ 之后当主机', c.host, '1.2.3.4');
+    _eq('密码完整保留', c.password, 'p@ss:w0rd');
+  }
+
+  // ── 缺协议默认 socks5 ──
+  {
+    final c = parseProxyLine('1.2.3.4:1080')!;
+    _eq('默认协议', c.scheme, ProxyScheme.socks5);
+  }
+
+  // ── 畸形行返回 null，不抛 ──
+  _ok('空行', parseProxyLine('') == null);
+  _ok('注释', parseProxyLine('# 说明') == null);
+  _ok('没端口', parseProxyLine('socks5://1.2.3.4') == null);
+  _ok('端口不是数字', parseProxyLine('1.2.3.4:abc') == null);
+  _ok('端口越界', parseProxyLine('1.2.3.4:99999') == null);
+  _ok('端口为 0', parseProxyLine('1.2.3.4:0') == null);
+  _ok('未知协议', parseProxyLine('ftp://1.2.3.4:21') == null);
+
+  // ── 列表解析：去重 + 跳过坏行 ──
+  {
+    final list = parseProxyList('''
+# 注释
+socks5://1.2.3.4:1080
+socks5://1.2.3.4:1080
+坏行
+http://5.6.7.8:8080
+''');
+    _eq('去重后两条', list.length, 2);
+  }
+
+  // ── SOCKS5 要走桥 ──
+  {
+    final s5 = parseProxyLine('socks5://1.2.3.4:1080')!;
+    final ht = parseProxyLine('http://1.2.3.4:8080')!;
+    _ok('socks5 需要桥', s5.scheme.needsBridge);
+    _ok('http 不需要桥', !ht.scheme.needsBridge);
+  }
+
+  // ── 显示名 ──
+  {
+    final c = parseProxyLine('socks5://1.2.3.4:1080')!;
+    _eq('没 label 用 host:port', c.displayName, '1.2.3.4:1080');
   }
 }

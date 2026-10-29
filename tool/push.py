@@ -67,19 +67,21 @@ def collect():
 
 
 def make_blob(path):
-    """把文件变成 blob sha。文本走 utf8，二进制走 base64。"""
+    """把文件变成 blob sha。
+
+    **一律走 base64**，不再区分文本/二进制。
+
+    原来文本走 utf8 是因为「base64 多三分之一体积」，但那点体积换来的是
+    **一类静默失败**：`windows/flutter/CMakeLists.txt` 带 BOM、某些文件
+    带 CRLF/奇异字符时，utf8 那条路建 blob 会失败 —— 而失败发生在推送
+    中途，前面的 blob 已经建好了，重推要重来一遍。
+
+    统一 base64 就没有「哪些文件算文本」这个判断了，也就没有判断错的可能。
+    """
     raw = open(path, 'rb').read()
-    try:
-        text = raw.decode('utf-8')
-        # 排除含 NUL 的「其实是二进制」的文件。
-        if '\x00' not in text:
-            r = api('POST', '/repos/%s/git/blobs' % REPO,
-                    {'content': text, 'encoding': 'utf-8'})
-            return r.get('sha')
-    except UnicodeDecodeError:
-        pass
     r = api('POST', '/repos/%s/git/blobs' % REPO,
-            {'content': base64.b64encode(raw).decode('ascii'), 'encoding': 'base64'})
+            {'content': base64.b64encode(raw).decode('ascii'),
+             'encoding': 'base64'})
     return r.get('sha')
 
 
