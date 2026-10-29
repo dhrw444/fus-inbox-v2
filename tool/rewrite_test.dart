@@ -22,6 +22,7 @@ import '../lib/core/code_extract.dart';
 import '../lib/core/sms_message.dart';
 import '../lib/core/user_agent.dart';
 import '../lib/data/frame.dart';
+import '../lib/data/number_entry.dart';
 import '../lib/data/proxy_config.dart';
 import '../lib/data/inbox_state.dart';
 import '../lib/data/inbox_store.dart';
@@ -56,6 +57,7 @@ void main() {
   _testStore();
   _testUserAgent();
   _testProxy();
+  _testNumbers();
   print('\n$_pass passed, $_fail failed');
   if (_fail > 0) throw StateError('$_fail failed');
 }
@@ -713,5 +715,83 @@ http://5.6.7.8:8080
   {
     final c = parseProxyLine('socks5://1.2.3.4:1080')!;
     _eq('没 label 用 host:port', c.displayName, '1.2.3.4:1080');
+  }
+}
+
+void _testNumbers() {
+  // ── 11 位格式化 ──
+  {
+    const n = NumberEntry(digits: '18607507091');
+    _eq('分组', n.formatted, '(860) 750-7091');
+    _eq('收件页地址', n.inboxUrl, 'https://freeussms.com/numbers/18607507091/');
+  }
+
+  // ── 非 11 位原样，不硬套分组 ──
+  {
+    _eq(
+      '10 位原样',
+      const NumberEntry(digits: '8607507091').formatted,
+      '8607507091',
+    );
+    _eq('7 位原样', const NumberEntry(digits: '1234567').formatted, '1234567');
+    _eq('空串原样', const NumberEntry(digits: '').formatted, '');
+  }
+
+  // ── 解析：双引号 / 单引号 / 绝对域名 ──
+  {
+    const html = '''
+<a href="/numbers/18607507091/">A</a>
+<a href='/numbers/18603130709/'>B</a>
+<a href="https://freeussms.com/numbers/18609990001/">C</a>
+''';
+    final list = parseNumberList(html);
+    _eq('三条', list.length, 3);
+    _eq('顺序保持', list[0].digits, '18607507091');
+    _eq('单引号也认', list[1].digits, '18603130709');
+    _eq('绝对域名也认', list[2].digits, '18609990001');
+  }
+
+  // ── 去重 ──
+  {
+    const html = '''
+<a href="/numbers/18607507091/">A</a>
+<a href="/numbers/18607507091/">A 又出现一次</a>
+''';
+    _eq('同一条只算一次', parseNumberList(html).length, 1);
+  }
+
+  // ── 不带结尾斜杠也认 ──
+  {
+    _eq('无尾斜杠', parseNumberList('<a href="/numbers/18607507091">').length, 1);
+  }
+
+  // ── 太短/太长的数字不算 ──
+  {
+    // 站点 ID、分页参数之类也会以数字出现在 href 里。
+    const html = '''
+<a href="/numbers/123/">太短</a>
+<a href="/numbers/1234567890123456/">太长</a>
+<a href="/numbers/18607507091/">正常</a>
+''';
+    final list = parseNumberList(html);
+    _eq('只留正常那条', list.length, 1);
+    _eq('留下的是对的', list[0].digits, '18607507091');
+  }
+
+  // ── 空 HTML 不抛 ──
+  _eq('空串', parseNumberList('').length, 0);
+  _eq('无关内容', parseNumberList('<html>没有号码</html>').length, 0);
+
+  // ── 相等性按数字 ──
+  {
+    _ok(
+      '同数字相等',
+      const NumberEntry(digits: '1') ==
+          const NumberEntry(digits: '1', region: 'X'),
+    );
+    _ok(
+      '不同数字不等',
+      const NumberEntry(digits: '1') != const NumberEntry(digits: '2'),
+    );
   }
 }
