@@ -286,7 +286,7 @@ Future<void> main() async {
     await up.start();
     final bridge = SocksBridge();
     final port = await bridge.start(
-      ProxyConfig(
+      upstream: ProxyConfig(
         scheme: ProxyScheme.socks5,
         host: '127.0.0.1',
         port: up.port,
@@ -324,7 +324,7 @@ Future<void> main() async {
     await up.start();
     final bridge = SocksBridge();
     final port = await bridge.start(
-      ProxyConfig(
+      upstream: ProxyConfig(
         scheme: ProxyScheme.socks5,
         host: '127.0.0.1',
         port: up.port,
@@ -347,7 +347,7 @@ Future<void> main() async {
     await up.start();
     final bridge = SocksBridge();
     final port = await bridge.start(
-      ProxyConfig(
+      upstream: ProxyConfig(
         scheme: ProxyScheme.socks5,
         host: '127.0.0.1',
         port: up.port,
@@ -370,7 +370,7 @@ Future<void> main() async {
     await up.start();
     final bridge = SocksBridge();
     final port = await bridge.start(
-      ProxyConfig(
+      upstream: ProxyConfig(
         scheme: ProxyScheme.socks5,
         host: '127.0.0.1',
         port: up.port,
@@ -392,7 +392,7 @@ Future<void> main() async {
     await up.start();
     final bridge = SocksBridge();
     final port = await bridge.start(
-      ProxyConfig(
+      upstream: ProxyConfig(
         scheme: ProxyScheme.socks5,
         host: '127.0.0.1',
         port: up.port,
@@ -465,7 +465,7 @@ Future<void> main() async {
     await up.start();
     final bridge = SocksBridge();
     final port = await bridge.start(
-      ProxyConfig(
+      upstream: ProxyConfig(
         scheme: ProxyScheme.socks5,
         host: '127.0.0.1',
         port: up.port,
@@ -490,6 +490,115 @@ Future<void> main() async {
     await up.stop();
   }
 
+  // ── ⑦ 没有出口时走直连，而不是拒绝服务 ──
+  {
+    final echo = await _EchoServer.start();
+    final bridge = SocksBridge();
+    final port = await bridge.start(); // upstream 缺省 null
+    final peer = await _connectBridge(port);
+    peer.send('CONNECT 127.0.0.1:${echo.port} HTTP/1.1\r\n\r\n');
+    _ok('直连也回 200', (await peer.readHead()).startsWith('HTTP/1.1 200'));
+    peer.send('direct');
+    _ok('直连隧道通', utf8.decode(await peer.take(6)) == 'direct');
+    _ok('直连确实到了目标', echo.connections == 1);
+    peer.socket.destroy();
+    await bridge.stop();
+    await echo.stop();
+  }
+
+  // ── ⑧ 换出口只影响新连接，不掐断在传的 ──
+  {
+    final a = _FakeSocks();
+    await a.start();
+    final echo = await _EchoServer.start();
+    final bridge = SocksBridge();
+    final port = await bridge.start(
+      upstream: ProxyConfig(
+        scheme: ProxyScheme.socks5,
+        host: '127.0.0.1',
+        port: a.port,
+        user: 'u',
+        password: 'p',
+      ),
+    );
+
+    final old = await _connectBridge(port);
+    old.send('CONNECT 1.example:443 HTTP/1.1\r\n\r\n');
+    _ok('换之前走上游', (await old.readHead()).startsWith('HTTP/1.1 200'));
+    old.send('still');
+    _ok('换之前数据通', utf8.decode(await old.take(5)) == 'still');
+
+    // 热切换成直连。
+    bridge.setUpstream(null);
+    _ok('记了一次切换', bridge.upstreamSwitches == 1);
+    bridge.setUpstream(null);
+    _ok('同一条出口重复设不算切换', bridge.upstreamSwitches == 1);
+
+    // 老连接还在，数据照样能走 —— 这是「不掐断在传的」的判据。
+    old.send('alive');
+    _ok('老连接没被掐断', utf8.decode(await old.take(5)) == 'alive');
+
+    // 新连接走直连。
+    final fresh = await _connectBridge(port);
+    fresh.send('CONNECT 127.0.0.1:${echo.port} HTTP/1.1\r\n\r\n');
+    _ok('新连接回 200', (await fresh.readHead()).startsWith('HTTP/1.1 200'));
+    fresh.send('newgo');
+    _ok('新连接走直连', utf8.decode(await fresh.take(5)) == 'newgo');
+
+    old.socket.destroy();
+    fresh.socket.destroy();
+    await bridge.stop();
+    await a.stop();
+    await echo.stop();
+  }
+
+  // ── ⑨ 连上不发请求 → 超时回 408，不是挂在那里占 fd ──
+  {
+    final bridge = SocksBridge();
+    bridge.headTimeout = const Duration(milliseconds: 400);
+    final port = await bridge.start();
+    final peer = await _connectBridge(port);
+    // 故意什么都不发。
+    final head = await peer.readHead();
+    _ok('沉默的客户端回 408', head.startsWith('HTTP/1.1 408'));
+    _ok('原因说得出是超时', bridge.lastError.contains('秒内没收到'));
+    peer.socket.destroy();
+    await bridge.stop();
+  }
+
   print('\n  $_pass passed, $_fail failed');
   exit(_fail == 0 ? 0 : 1);
+}
+
+/// 一个只会把收到的字节原样送回的 TCP 服务，用来验直连。
+///
+/// 直连路径没有 SOCKS5 握手，所以不能用 `_FakeSocks` 顶替 —— 需要的是
+/// 一个「连上就是隧道」的裸服务端。
+class _EchoServer {
+  _EchoServer._(this._server);
+
+  final ServerSocket _server;
+  int connections = 0;
+
+  int get port => _server.port;
+
+  static Future<_EchoServer> start() async {
+    final s = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    final self = _EchoServer._(s);
+    s.listen((c) {
+      self.connections++;
+      c.listen(
+        (d) {
+          try {
+            c.add(d);
+          } catch (_) {}
+        },
+        onError: (_) {},
+        cancelOnError: true,
+      );
+    }, onError: (_) {});
+    return self;
+  }
+
+  Future<void> stop() => _server.close();
 }

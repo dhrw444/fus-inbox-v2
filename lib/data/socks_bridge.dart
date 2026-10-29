@@ -51,7 +51,18 @@ class const _Tunnel({
 /// 换出口的接口（那会引入「一半连接走旧出口」的状态）。
 class SocksBridge() {
   ServerSocket? _server;
+
+  /// 当前出口。`null` = **直连**。
+  ///
+  /// 可空是有意的，不是「还没配」：用户完全可能一条代理都不配（或者
+  /// 清单全试挂了），那时桥必须自己直连出去，而不是拒绝服务。
+  /// 这条桥的语义是「按当前出口转发」，不是「一条 SOCKS5 隧道」。
   ProxyConfig? _upstream;
+
+  /// 出口被换过几次。只用于排查。
+  int upstreamSwitches = 0;
+
+  ProxyConfig? get upstream => _upstream;
 
   /// 当前有没有在跑。
   bool get isRunning => _server != null;
@@ -70,16 +81,33 @@ class SocksBridge() {
   /// 最近一次失败原因，给界面显示用。
   String lastError = '';
 
-  /// 启动，返回本地端口。已经在跑就先停掉（换出口时重复调用是正常的）。
-  Future<int> start(ProxyConfig upstream) async {
+  /// 启动，返回本地端口。
+  ///
+  /// [upstream] 为 null 表示直连。
+  ///
+  /// [port] 默认 0（系统分配）。需要固定端口时传具体端口 ——
+  /// 端口一变，客户端那边的代理设置就失效了，所以「能不变就不变」。
+  /// 端口被占用会抛，由调用方决定退到哪个端口。
+  Future<int> start({ProxyConfig? upstream, int port = 0}) async {
     await stop();
     _upstream = upstream;
     connections = 0;
+    upstreamSwitches = 0;
     lastError = '';
-    final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, port);
     _server = server;
     server.listen(_handle, onError: (_) {});
     return server.port;
+  }
+
+  /// 换出口。**只影响之后建立的连接**。
+  ///
+  /// 不杀在传的隧道 —— 中途掐掉会把正在收的东西截断，而用户看到的
+  /// 只是「刷新一下少了几条」。同一条出口（id 相同）重复设不算切换。
+  void setUpstream(ProxyConfig? next) {
+    if (identical(next, _upstream) || next?.id == _upstream?.id) return;
+    _upstream = next;
+    upstreamSwitches++;
   }
 
   /// 停止。多次调用安全。
@@ -94,26 +122,36 @@ class SocksBridge() {
     }
   }
 
+  /// 读请求头的上限。
+  ///
+  /// 二十秒够慢网络发完一行请求头，再久就是对面连上不说话。做成可调
+  /// 字段而不是常量，是为了测试能把它调到几百毫秒 —— 不然这条判据
+  /// 要跑二十秒，久了就没人跑。
+  Duration headTimeout = const Duration(seconds: 20);
+
   /// 处理一条来自 WebView 的连接。
   Future<void> _handle(Socket client) async {
-    final upstream = _upstream;
-    if (upstream == null) {
-      _hangUp(client);
-      return;
-    }
+    // Nagle 会把小包攒起来再发，对隧道就是平白加一层延迟。
+    client.setOption(SocketOption.tcpNoDelay, true);
     final cr = _SockReader(client);
 
     String head;
     try {
-      head = await cr.takeHead();
+      head = await cr.takeHead(timeout: headTimeout);
     } catch (e) {
-      _fail(client, 400, '读请求头失败: $e');
+      // 超时/灌垃圾都要**显式收掉这条连接**，不能直接 return ——
+      // 那样 reader 的订阅还挂着，客户端之后发什么都进缓冲没人消费，
+      // fd 不释放、内存无上限涨。实测过：五个「连上就不发请求」的
+      // 客户端，二十秒后 fd 仍是 +10，客户端断开后还进 CLOSE_WAIT。
+      lastError = '读请求头失败: $e';
+      _fail(client, 408, lastError);
       return;
     }
 
     final parts = head.split('\r\n').first.split(' ');
     if (parts.length < 3) {
-      _fail(client, 400, '请求行不完整');
+      lastError = '请求行不完整（不是 CONNECT，也不是绝对地址的 GET/POST）';
+      _fail(client, 400, lastError);
       return;
     }
     final method = parts[0].toUpperCase();
@@ -122,14 +160,17 @@ class SocksBridge() {
     // CONNECT 给的是 `host:port`；绝对地址给的是完整 URL。
     final hp = method == 'CONNECT' ? _splitHostPort(target) : _splitUrl(target);
     if (hp == null) {
-      _fail(client, 400, '听不懂的目标地址: $target');
+      lastError = '听不懂的目标地址: $target';
+      _fail(client, 400, lastError);
       return;
     }
     final (host, port) = hp;
 
     _Tunnel tunnel;
     try {
-      tunnel = await _connectViaSocks(upstream, host, port);
+      tunnel = _upstream == null
+          ? await _connectDirect(host, port)
+          : await _connectViaSocks(_upstream!, host, port);
     } catch (e) {
       lastError = '$e';
       _fail(client, 502, '$e');
@@ -246,7 +287,13 @@ class _SockReader(this.socket) {
   }
 
   /// 移交：之后收到的数据直接写给 [to]。
-  void attach(Socket to) => _forwardTo = to;
+  ///
+  /// **顺手挂钩**。直连路径下没有任何 `take()` 调用，不在这儿挂的话
+  /// 订阅永远不建立 —— 表现为「隧道通了，但一个字节都不往回走」。
+  void attach(Socket to) {
+    _hook();
+    _forwardTo = to;
+  }
 
   /// 取走缓冲里现有的全部字节，清空缓冲。
   List<int> drain() {
@@ -270,7 +317,20 @@ class _SockReader(this.socket) {
   }
 
   /// 读到空行为止（HTTP 请求头）。
-  Future<String> takeHead() async {
+  Future<String> takeHead({Duration? timeout}) {
+    final inner = _takeHeadInner();
+    if (timeout == null) return inner;
+    return inner.timeout(
+      timeout,
+      // 子秒超时要单独说，否则会印出「0 秒内没收到」这种看不懂的话。
+      onTimeout: () => throw StateError(
+        '${timeout.inMilliseconds < 1000 ? '${timeout.inMilliseconds} 毫秒' : '${timeout.inSeconds} 秒'}'
+        '内没收到完整请求头',
+      ),
+    );
+  }
+
+  Future<String> _takeHeadInner() async {
     _hook();
     const cap = 64 * 1024;
     while (true) {
@@ -295,6 +355,22 @@ class _SockReader(this.socket) {
   }
 }
 
+/// 按**当前**出口连到 [host]:[port]。
+///
+/// 每次连接都现读一次 `_upstream`，不是启动时抓的快照 —— 换出口是
+/// 热切换，抓快照就等于永远停在第一条出口上。
+Future<_Tunnel> _connectDirect(String host, int port) async {
+  // 直连也要超时：DNS 卡住或对端黑洞时，不设超时就是永久占一条客户端
+  // 连接 + 一个 fd。
+  final socket = await Socket.connect(
+    host,
+    port,
+    timeout: const Duration(seconds: 12),
+  );
+  socket.setOption(SocketOption.tcpNoDelay, true);
+  return _Tunnel(socket: socket, reader: _SockReader(socket), hop: host);
+}
+
 /// 连上上游，并让它替我们连到 [host]:[port]。
 ///
 /// RFC 1928 的四步，一步都不能省：
@@ -310,6 +386,7 @@ Future<_Tunnel> _connectViaSocks(ProxyConfig p, String host, int port) async {
     p.port,
     timeout: const Duration(seconds: 12),
   );
+  socket.setOption(SocketOption.tcpNoDelay, true);
   final reader = _SockReader(socket);
   try {
     // ── ① 问候 ──
