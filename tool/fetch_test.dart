@@ -8,8 +8,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'file:///var/minis/workspace/fusbot/fus2/lib/data/number_entry.dart';
-import 'file:///var/minis/workspace/fusbot/fus2/lib/data/number_fetch.dart';
+import '../lib/data/number_entry.dart';
+import '../lib/data/number_fetch.dart';
 
 int _pass = 0;
 int _fail = 0;
