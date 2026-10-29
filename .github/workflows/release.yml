@@ -104,13 +104,27 @@ jobs:
       - name: 检查产物
         run: |
           set -euo pipefail
+          # 有签名时产物是 `app-arm64-v8a-release.apk`，没签名时 gradle 会加
+          # `-unsigned` 后缀。**两种都认** —— 但要把是哪一种说清楚，不能
+          # 让人以为拿到的是能装的包。
           apk=build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+          signed=1
           if [ ! -f "$apk" ]; then
-            echo "::error::没生成 $apk"
+            apk=build/app/outputs/flutter-apk/app-arm64-v8a-release-unsigned.apk
+            signed=0
+          fi
+          if [ ! -f "$apk" ]; then
+            echo "::error::两种产物都没生成"
             ls -la build/app/outputs/flutter-apk/ || true
             exit 1
           fi
-          echo "产物 $apk：$(stat -c%s "$apk") 字节"
+          echo "产物 $(basename "$apk")：$(stat -c%s "$apk") 字节"
+          if [ "$signed" = "0" ]; then
+            echo "::warning::这是 **unsigned** 包，装不上。要能装的包需要配置 KEYSTORE_BASE64 等四个 secret。"
+            echo "unsigned=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "unsigned=0" >> "$GITHUB_OUTPUT"
+          fi
           # 符号表也要有 —— 混淆之后没有它，线上崩溃栈没法看。
           if [ ! -d build/debug-info ]; then
             echo "::error::没生成符号表 build/debug-info"
@@ -122,7 +136,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: release-apk-${{ github.run_id }}
-          path: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+          # 通配：有签名/没签名两个文件名都覆盖到，不用在 YAML 里做条件分支。
+          path: build/app/outputs/flutter-apk/app-arm64-v8a-release*.apk
           if-no-files-found: error
           retention-days: 30
 

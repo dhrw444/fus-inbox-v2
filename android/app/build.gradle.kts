@@ -45,7 +45,18 @@ android {
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("release")
+            // **没有 key.properties 就不挂 release 签名。**
+            //
+            // 无条件是错的：gradle 的 `validateSigningRelease` 会直接报
+            // 「Keystore file not set for signing config release」，
+            // 整个构建失败 —— 连 unsigned 包都出不来。那样「没有密钥时
+            // 明确出一个 unsigned 包」这句承诺就是假的。
+            //
+            // 挂不上的时候产物是 `app-arm64-v8a-release-unsigned.apk`，
+            // 文件名自己会说明它装不上。
+            if (keystorePropertiesFile.exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
