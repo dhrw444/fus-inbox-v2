@@ -102,7 +102,7 @@ class const InboxState({
 
   /// 初始状态。
   static const empty = InboxState(
-    messages: [],
+    messages: <SmsMessage>[],
     phase: InboxPhase.waiting,
     status: '正在打开收件页…',
   );

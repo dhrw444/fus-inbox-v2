@@ -6,7 +6,15 @@ publish_to: "none"
 version: 0.1.0+1
 
 environment:
-  sdk: ^3.9.0
+  # **下界不能低于 3.13。**
+  #
+  # 主构造器语法（`class const Foo({required this.x})`）是随 3.13 一起
+  # 可用的。约束下界写低了，语言版本判定就跟着低，那个语法会被判
+  # `primary-constructors is disabled` —— CI 上直接编译不过。
+  #
+  # （我第一版写了 `^3.9.0`，以为是「放宽一点更兼容」，实际是把用到的
+  #   语言特性关掉了。）
+  sdk: ^3.13.0
   flutter: ">=3.47.5"
 
 dependencies:
