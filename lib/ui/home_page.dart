@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show FilteringTextInputFormatter;
 
 import 'inbox_page.dart';
+import 'numbers_page.dart';
 
 /// 站点收件页的地址模板。
 ///
@@ -76,6 +77,18 @@ class _HomePageState() extends State<HomePage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            // 目录入口放在输入框**上面**：用户第一次进来时更可能
+            // 不知道号码该填什么，而不是已经知道。
+            OutlinedButton.icon(
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(builder: (_) => const NumbersPage()),
+                );
+              },
+              icon: const Icon(Icons.list_alt),
+              label: const Text('浏览号码目录'),
+            ),
+            const SizedBox(height: 20),
             Text('输入号码', style: theme.textTheme.titleMedium),
             const SizedBox(height: 8),
             TextField(
