@@ -1,0 +1,13 @@
+# 构建产物
+build/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# 平台生成物
+windows/flutter/ephemeral/
+android/.gradle/
+android/local.properties
+android/app/debug/
+android/app/profile/
+android/app/release/

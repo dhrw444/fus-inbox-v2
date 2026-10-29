@@ -1,0 +1,81 @@
+name: fus_inbox
+description: "查看公共美国号码池的最新短信，可选号、可按州与区号筛选"
+publish_to: "none"
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.13.0
+  flutter: ">=3.47.5"
+
+dependencies:
+  dynamic_color: ^2.1.0
+  flutter:
+    sdk: flutter
+  material_ui: ^1.7.0
+  material_3_expressive: ^1.1.7
+  material_color_utilities: ^0.13.0
+  # 注意：这里**不要**加 meta。
+  #
+  # 曾经为了 `@internal` 标注而直接依赖它，那些标注后来全删了 —— `@internal`
+  # 只对「公开包的私有 API」有意义，本应用 `publish_to: none`、没有对外 API 面，
+  # 标上去 analyzer 反而报 `invalid_internal_annotation`。本仓也不需要
+  # `@visibleForTesting`（仅有的两处标在了生产代码实际在用的成员上，是假的）。
+  # 一个包覆盖 Android / iOS / macOS / Windows / Linux / Web。
+  #
+  # 为什么不是 webview_flutter：它到 4.14.1（2026-07）仍然只有
+  # android / ios / macos —— **没有 Windows 实现**，而且官方一直没有。
+  # 我们要 Windows x86，所以必须换。
+  #
+  # 为什么是 beta：Windows 支持（flutter_inappwebview_windows）目前只在
+  # beta 线上。这不是赌 —— `hikari_novel_flutter`（431 star、MIT、
+  # 2026-10 仍在更新）就用这个版本在六个平台上发成品，windows/ 目录是
+  # 纯生成的标准 runner，零自定义平台代码。
+  #
+  # 顺带解决两件事：
+  #   1. 插件自带 `ProxyController`（Android），可以删掉我们手写的
+  #      `ProxyControllerBridge.kt`；
+  #   2. `WebViewEnvironmentSettings.additionalBrowserArguments` 就是
+  #      WebView2 的 `--proxy-server`，Windows 代理不用自己搭通道。
+  flutter_inappwebview: ^6.2.0-beta.3
+  flutter_riverpod: ^3.4.3
+  pub_semver: ^2.2.1
+  shared_preferences: ^2.5.6
+
+dev_dependencies:
+  # 注意：**不要**加回 riverpod_annotation / riverpod_generator。
+  #
+  # 全项目的 provider 都是手写的（`NotifierProvider(...)` / `Provider(...)`），
+  # 一个 `@riverpod` 注解都没用，也没有任何 `.g.dart` —— build_runner
+  # 整条生成链早就拆掉了。留着这两个包只会让 `flutter pub get` 多拉一堆
+  # 传递依赖，还会让人以为「这里可以用注解」。
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
+  riverpod_lint: ^3.1.9
+  shared_preferences_platform_interface: ^2.4.2
+  integration_test:
+    sdk: flutter
+
+# cli_util 0.6.0 被 flutter_launcher_icons 的版本上限卡住，这里抬过去。
+# 任何 pub 升级后都要重跑 flutter analyze / flutter test / APK 构建验证。
+# test_api 与 material_color_utilities 由 Flutter SDK 自身钉住，不要动。
+dependency_overrides:
+  cli_util: ^0.6.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/icon/icon.png
+    - assets/scanner.js
+    - assets/proxies/
+
+flutter_launcher_icons:
+  android: "ic_launcher"
+  ios: true
+  image_path_android: "assets/icon/ic_launcher.png"
+  adaptive_icon_background: "assets/icon/ic_launcher_background.png"
+  adaptive_icon_foreground: "assets/icon/ic_launcher_foreground.png"
+  adaptive_icon_monochrome: "assets/icon/ic_launcher_monochrome.png"
+  min_sdk_android: 21
+  image_path_ios: "assets/icon/icon.png"
