@@ -15,7 +15,7 @@ import '../core/sms_message.dart';
 import 'merge_frame.dart';
 
 /// 收件箱处在什么阶段。
-enum InboxPhase {
+enum InboxPhase() {
   /// 正在等站点给消息（页面刚打开 / 验证中 / 被限流）。
   waiting,
 
@@ -27,7 +27,7 @@ enum InboxPhase {
 }
 
 /// 站点拒绝给消息的原因。
-enum HoldKind {
+enum HoldKind() {
   /// 配额用完（`429 + pause`）。换出口或等。
   quota,
 

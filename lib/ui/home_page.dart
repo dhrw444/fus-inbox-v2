@@ -16,12 +16,12 @@ import 'inbox_page.dart';
 /// 路由形状，不是我们能选的。
 const _siteHost = 'freeussms.com';
 
-class const HomePage() extends StatefulWidget {
+class const HomePage({super.key}) extends StatefulWidget {
   @override
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState() extends State<HomePage> {
   final _input = TextEditingController();
   String? _error;
 
@@ -58,7 +58,9 @@ class _HomePageState extends State<HomePage> {
           inboxUrl: 'https://$_siteHost/numbers/$n/',
           title:
               '(${n.substring(0, 3)}) ${n.substring(3, 6)}-${n.substring(6)}',
-          allowedHost: _siteHost,
+          // `allowedHost` 不传 —— `InboxPage` 的默认值就是同一个域名，
+          // 显式传一遍会被 `avoid_redundant_argument_values` 判冗余。
+          // 站点换域名时改 `InboxPage` 的默认值那一处即可。
         ),
       ),
     );

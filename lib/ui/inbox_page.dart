@@ -50,13 +50,12 @@ const _loadMoreTimeout = Duration(seconds: 15);
 const _watchdogAfter = Duration(seconds: 25);
 
 /// 收件页。
-class InboxPage extends StatefulWidget {
-  const InboxPage({
-    required this.inboxUrl,
-    required this.title,
-    this.allowedHost = 'freeussms.com',
-    super.key,
-  });
+class const InboxPage({
+  required this.inboxUrl,
+  required this.title,
+  this.allowedHost = 'freeussms.com',
+  super.key,
+}) extends StatefulWidget {
 
   /// 要打开的收件页地址（`https://freeussms.com/numbers/<号码>/`）。
   final String inboxUrl;
@@ -74,7 +73,7 @@ class InboxPage extends StatefulWidget {
   State<InboxPage> createState() => _InboxPageState();
 }
 
-class _InboxPageState extends State<InboxPage> {
+class _InboxPageState() extends State<InboxPage> {
   final _store = InboxStore();
   final _scroll = ScrollController();
   final _key = GlobalKey();

@@ -48,7 +48,8 @@ Future<void> _bootstrap() async {
 }
 
 /// 启动失败时显示的东西。
-class const _StartupFailed({required this.message}) extends StatelessWidget {
+class const _StartupFailed({required this.message, super.key})
+    extends StatelessWidget {
   final String message;
 
   @override
@@ -91,7 +92,7 @@ class const _StartupFailed({required this.message}) extends StatelessWidget {
 }
 
 /// 应用外壳。
-class const FusApp() extends StatelessWidget {
+class const FusApp({super.key}) extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
