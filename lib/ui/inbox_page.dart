@@ -24,14 +24,12 @@
 library;
 
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'
     show Clipboard, ClipboardData, rootBundle;
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
-import '../core/sms_message.dart';
 import '../core/user_agent.dart';
 import '../data/inbox_state.dart';
 import '../data/inbox_store.dart';

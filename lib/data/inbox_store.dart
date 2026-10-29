@@ -15,7 +15,6 @@
 /// 里（都是纯函数、有单测），这里只负责**接线**。
 library;
 
-import '../core/sms_message.dart';
 import 'frame.dart';
 import 'inbox_state.dart';
 import 'merge_frame.dart';

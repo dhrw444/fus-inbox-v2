@@ -37,7 +37,8 @@ Future<void> _bootstrap() async {
   // 直接问内核要 —— 这是唯一可信的来源。
   try {
     final ua = await InAppWebViewController.getDefaultUserAgent();
-    if (ua != null && ua.trim().isNotEmpty) bootstrapUserAgent(ua);
+    // `getDefaultUserAgent` 的返回类型非空，不用判 null。
+    if (ua.trim().isNotEmpty) bootstrapUserAgent(ua);
   } catch (e) {
     // 探测失败就用 `BrowserIdentity.fallback`（一组真实存在的值）。
     // 不编版本号、不留空字段 —— 宁可少变化，也不给自相矛盾的身份。

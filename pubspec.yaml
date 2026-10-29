@@ -37,45 +37,7 @@ dependencies:
   #   2. `WebViewEnvironmentSettings.additionalBrowserArguments` 就是
   #      WebView2 的 `--proxy-server`，Windows 代理不用自己搭通道。
   flutter_inappwebview: ^6.2.0-beta.3
-  flutter_riverpod: ^3.4.3
   pub_semver: ^2.2.1
   shared_preferences: ^2.5.6
 
 dev_dependencies:
-  # 注意：**不要**加回 riverpod_annotation / riverpod_generator。
-  #
-  # 全项目的 provider 都是手写的（`NotifierProvider(...)` / `Provider(...)`），
-  # 一个 `@riverpod` 注解都没用，也没有任何 `.g.dart` —— build_runner
-  # 整条生成链早就拆掉了。留着这两个包只会让 `flutter pub get` 多拉一堆
-  # 传递依赖，还会让人以为「这里可以用注解」。
-  flutter_test:
-    sdk: flutter
-  flutter_lints: ^6.0.0
-  flutter_launcher_icons: ^0.14.4
-  riverpod_lint: ^3.1.9
-  shared_preferences_platform_interface: ^2.4.2
-  integration_test:
-    sdk: flutter
-
-# cli_util 0.6.0 被 flutter_launcher_icons 的版本上限卡住，这里抬过去。
-# 任何 pub 升级后都要重跑 flutter analyze / flutter test / APK 构建验证。
-# test_api 与 material_color_utilities 由 Flutter SDK 自身钉住，不要动。
-dependency_overrides:
-  cli_util: ^0.6.0
-
-flutter:
-  uses-material-design: true
-  assets:
-    - assets/icon/icon.png
-    - assets/scanner.js
-    - assets/proxies/
-
-flutter_launcher_icons:
-  android: "ic_launcher"
-  ios: true
-  image_path_android: "assets/icon/ic_launcher.png"
-  adaptive_icon_background: "assets/icon/ic_launcher_background.png"
-  adaptive_icon_foreground: "assets/icon/ic_launcher_foreground.png"
-  adaptive_icon_monochrome: "assets/icon/ic_launcher_monochrome.png"
-  min_sdk_android: 21
-  image_path_ios: "assets/icon/icon.png"

@@ -14,14 +14,10 @@
 /// 不从别处拿 —— 从别处拿就会和真实内核漂开。
 library;
 
-import 'dart:io';
 import 'dart:math';
 
 /// 当前正在用的身份。
 BrowserIdentity _current = BrowserIdentity.fallback;
-
-/// 内核报的 UA（探测一次，之后复用）。
-String? _kernelUserAgent;
 
 /// 内核大版本。用来给新身份定基准。
 int? _kernelMajor;
@@ -125,7 +121,6 @@ BrowserIdentity rotateIdentity([Random? rnd]) {
 void bootstrapUserAgent(String kernelUa) {
   final ua = kernelUa.trim();
   if (ua.isEmpty) return;
-  _kernelUserAgent = ua;
 
   final major = _parseMajor(ua);
   if (major != null && major > 0) _kernelMajor = major;
@@ -183,7 +178,6 @@ void restoreUserAgent(String? raw) {
   if (raw == null || raw.trim().isEmpty) return;
   final ua = raw.trim();
   final major = _parseMajor(ua);
-  _kernelUserAgent = null; // 磁盘那份不算内核真值
   _current = BrowserIdentity(
     userAgent: ua,
     model: _parseModel(ua) ?? _current.model,
