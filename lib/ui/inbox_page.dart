@@ -192,7 +192,12 @@ class _InboxPageState extends State<InboxPage> {
       return;
     }
     final passed = cookies.any(
-      (e) => e.name == 'cf_clearance' && (e.value ?? '').isNotEmpty,
+      // `Cookie.value` 的类型是 `dynamic`（平台层返回的原始值），
+      // 直接 `?? ''` 得到的还是 `dynamic` —— `&&` 的操作数不是 bool，
+      // analyzer 会判 `non_bool_operand`。显式转一次字符串。
+      (e) =>
+          e.name == 'cf_clearance' &&
+          (e.value?.toString() ?? '').isNotEmpty,
     );
     if (!passed || !mounted) return;
     setState(() => _round = _round.close());
