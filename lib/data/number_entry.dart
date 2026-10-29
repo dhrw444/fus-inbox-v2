@@ -220,3 +220,46 @@ DateTime? _parseRelTime(String block) {
   // 「8 小时前」而实际是「刚刚」。
   return DateTime.tryParse('${raw}Z')?.toUtc();
 }
+
+/// 一页目录：号码 + 站点自报的总数。
+///
+/// ## 为什么要带 `total`
+///
+/// 站点自己在页面上写「114 available numbers」。有它就**能精确算出有几页**
+/// （`ceil(114 / 24) = 5`），不用一页页试到 404 为止。
+///
+/// 实测对过：第 1/2/5 页都自报 114，第 5 页正好 18 条（114 = 24×4 + 18），
+/// 第 6 页 HTTP 404。所以这个数可信，这个算法成立。
+///
+/// `null` 表示页面上找不到这个数 —— 那时只能靠「不足一页就当到底了」。
+class const NumberPage({required this.entries, this.total}) {
+  /// 本页的号码，已按号码去重。
+  final List<NumberEntry> entries;
+
+  /// 站点自报的目录总条数。找不到时为 null。
+  final int? total;
+
+  /// 按 [pageSize] 推算一共几页。
+  ///
+  /// 自报总数缺失时返回 null —— **不猜**。猜错了要么少抓（用户以为
+  /// 只有 5 个号），要么多抓（打一堆 404 给站点）。
+  int? pageCount(int pageSize) {
+    final t = total;
+    if (t == null || t <= 0 || pageSize <= 0) return null;
+    return (t / pageSize).ceil();
+  }
+}
+
+/// 站点目录每页的条数。实测：1、2 页各 24 条。
+const kNumberPageSize = 24;
+
+/// 从一页 HTML 解析出 [NumberPage]。
+///
+/// 比 [parseNumberList] 多一件事：把站点自报的总数也抠出来。
+/// 目录抓取用这个；只关心号码列表的地方用那个就够了。
+NumberPage parseNumberPage(String html) {
+  final entries = parseNumberList(html);
+  final m = RegExp(r'(\d+)\s+available numbers').firstMatch(html);
+  final total = m == null ? null : int.tryParse(m.group(1)!);
+  return NumberPage(entries: entries, total: total);
+}

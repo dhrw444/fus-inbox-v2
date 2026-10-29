@@ -35,6 +35,11 @@ jobs:
       - name: 代理桥测试
         run: dart run tool/bridge_test.dart
 
+      # 目录抓取：起一个本地假站点真跑 HTTP。重点验「出口没起来必须失败
+      # 而不是悄悄直连」—— 那条退化了就是静默泄漏真实 IP，界面上看不出来。
+      - name: 目录抓取测试
+        run: dart run tool/fetch_test.dart
+
       # 抓取脚本的语法。JS 出错不会让 Dart 编译失败，只会在真机上
       # 静默什么都不做 —— 所以必须单独查。
       - name: JS 语法
