@@ -719,79 +719,185 @@ http://5.6.7.8:8080
 }
 
 void _testNumbers() {
-  // ── 11 位格式化 ──
+  // ── 11 位分组，非 11 位原样 ──
   {
-    const n = NumberEntry(digits: '18607507091');
-    _eq('分组', n.formatted, '(860) 750-7091');
-    _eq('收件页地址', n.inboxUrl, 'https://freeussms.com/numbers/18607507091/');
-  }
-
-  // ── 非 11 位原样，不硬套分组 ──
-  {
+    _eq(
+      '分组',
+      const NumberEntry(digits: '18607507091').formatted,
+      '(860) 750-7091',
+    );
     _eq(
       '10 位原样',
       const NumberEntry(digits: '8607507091').formatted,
       '8607507091',
     );
-    _eq('7 位原样', const NumberEntry(digits: '1234567').formatted, '1234567');
     _eq('空串原样', const NumberEntry(digits: '').formatted, '');
+    _eq(
+      '收件页地址',
+      const NumberEntry(digits: '18607507091').inboxUrl,
+      'https://freeussms.com/numbers/18607507091/',
+    );
   }
 
-  // ── 解析：双引号 / 单引号 / 绝对域名 ──
+  // ── 归属地一行：两个字段都可能缺 ──
+  {
+    _eq(
+      '都有',
+      const NumberEntry(
+        digits: '1',
+        state: 'Virginia',
+        areaCode: '757',
+      ).regionLabel,
+      'Virginia · 757',
+    );
+    _eq(
+      '只有州',
+      const NumberEntry(digits: '1', state: 'Texas').regionLabel,
+      'Texas',
+    );
+    _eq(
+      '只有区号',
+      const NumberEntry(digits: '1', areaCode: '512').regionLabel,
+      '512',
+    );
+    _eq('都没有', const NumberEntry(digits: '1').regionLabel, '');
+  }
+
+  // ── 解析：真实结构（照着站点实测的原文缩的）──
   {
     const html = '''
-<a href="/numbers/18607507091/">A</a>
-<a href='/numbers/18603130709/'>B</a>
-<a href="https://freeussms.com/numbers/18609990001/">C</a>
-''';
+<div class="numbers-grid" data-live-grid>
+<article class="number-card is-fresh has-messages" data-live-card="c3ce">
+  <span class="number-area">Virginia · 757</span>
+  <a href="https://freeussms.com/numbers/17573596469/">+1 (757) 359-6469</a>
+  <span class="fresh-text">Last text <time data-rel-time="2026-10-29T21:00:21">41 sec ago</time></span>
+  <div class="number-card-meta" data-count="23" data-empty="false">
+</article>
+<article class="number-card" data-live-card="aaaa">
+  <span class="number-area">Texas · 512</span>
+  <a href="https://freeussms.com/numbers/15125550100/">+1 (512) 555-0100</a>
+  <div class="number-card-meta" data-count="0" data-empty="true">
+</article>
+</div>''';
     final list = parseNumberList(html);
-    _eq('三条', list.length, 3);
-    _eq('顺序保持', list[0].digits, '18607507091');
-    _eq('单引号也认', list[1].digits, '18603130709');
-    _eq('绝对域名也认', list[2].digits, '18609990001');
+    _eq('两条', list.length, 2);
+    _eq('号码', list[0].digits, '17573596469');
+    _eq('州', list[0].state, 'Virginia');
+    _eq('区号', list[0].areaCode, '757');
+    _eq('条数', list[0].messageCount, 23);
+    _ok('有时间', list[0].lastTextAt != null);
+    _ok('非空号', list[0].hasMessages);
+    _eq('第二条条数', list[1].messageCount, 0);
+    _ok('第二条是空号', !list[1].hasMessages);
   }
 
-  // ── 去重 ──
+  // ── 时间按 UTC 解析，不按设备本地时区 ──
+  {
+    const html =
+        '<article><a href="/numbers/18607507091/">x</a>'
+        '<time data-rel-time="2026-10-29T21:00:21">41 sec ago</time></article>';
+    final t = parseNumberList(html).first.lastTextAt;
+    _ok('是 UTC', t!.isUtc);
+    _eq('小时', t.hour, 21);
+    _eq(
+      '不认相对文字',
+      parseNumberList(
+        '<article><a href="/numbers/18607507091/">x</a>41 sec ago</article>',
+      ).first.lastTextAt,
+      null,
+    );
+  }
+
+  // ── 去重：同一号码出现两次只算一条 ──
+  {
+    const html = '''
+<article><a href="/numbers/18607507091/">A</a></article>
+<article><a href="/numbers/18607507091/">A 又来一次</a></article>''';
+    _eq('只算一条', parseNumberList(html).length, 1);
+  }
+
+  // ── 退回路径：没有 article 也要能出列表 ──
   {
     const html = '''
 <a href="/numbers/18607507091/">A</a>
-<a href="/numbers/18607507091/">A 又出现一次</a>
-''';
-    _eq('同一条只算一次', parseNumberList(html).length, 1);
+<a href='/numbers/18603130709/'>B</a>''';
+    final list = parseNumberList(html);
+    _eq('退回拿到两条', list.length, 2);
+    _eq('顺序保持', list[0].digits, '18607507091');
+    _eq('退回没州名', list[0].state, '');
+    _eq('退回没条数', list[0].messageCount, 0);
   }
 
-  // ── 不带结尾斜杠也认 ──
+  // ── 太短太长的数字不算（站点 ID、分页参数也是数字）──
   {
-    _eq('无尾斜杠', parseNumberList('<a href="/numbers/18607507091">').length, 1);
-  }
-
-  // ── 太短/太长的数字不算 ──
-  {
-    // 站点 ID、分页参数之类也会以数字出现在 href 里。
-    const html = '''
-<a href="/numbers/123/">太短</a>
-<a href="/numbers/1234567890123456/">太长</a>
-<a href="/numbers/18607507091/">正常</a>
-''';
+    const html =
+        '<a href="/numbers/123/">短</a>'
+        '<a href="/numbers/1234567890123456/">长</a>'
+        '<a href="/numbers/18607507091/">正常</a>';
     final list = parseNumberList(html);
     _eq('只留正常那条', list.length, 1);
     _eq('留下的是对的', list[0].digits, '18607507091');
   }
 
-  // ── 空 HTML 不抛 ──
+  // ── 空输入不抛 ──
   _eq('空串', parseNumberList('').length, 0);
   _eq('无关内容', parseNumberList('<html>没有号码</html>').length, 0);
 
-  // ── 相等性按数字 ──
+  // ── 相等只看号码 ──
   {
     _ok(
-      '同数字相等',
-      const NumberEntry(digits: '1') ==
-          const NumberEntry(digits: '1', region: 'X'),
+      '同号码相等，就算条数不同',
+      const NumberEntry(digits: '1', messageCount: 5) ==
+          const NumberEntry(digits: '1', messageCount: 9),
     );
     _ok(
-      '不同数字不等',
+      '不同号码不等',
       const NumberEntry(digits: '1') != const NumberEntry(digits: '2'),
+    );
+  }
+
+  // ── describeAge 用绝对时间重算 ──
+  {
+    final now = DateTime.utc(2026, 10, 29, 21, 5, 0);
+    _eq(
+      '分钟',
+      NumberEntry(
+        digits: '1',
+        lastTextAt: DateTime.utc(2026, 10, 29, 21, 0, 21),
+        messageCount: 3,
+      ).describeAge(now),
+      '4 分钟前 · 3 条',
+    );
+    _eq(
+      '小时',
+      NumberEntry(
+        digits: '1',
+        lastTextAt: DateTime.utc(2026, 10, 29, 19, 0, 0),
+      ).describeAge(now),
+      '2 小时前',
+    );
+    _eq(
+      '天',
+      NumberEntry(
+        digits: '1',
+        lastTextAt: DateTime.utc(2026, 10, 27, 21, 0, 0),
+      ).describeAge(now),
+      '2 天前',
+    );
+    _eq(
+      '没时间有条数',
+      const NumberEntry(digits: '1', messageCount: 7).describeAge(now),
+      '7 条',
+    );
+    _eq('没时间没条数', const NumberEntry(digits: '1').describeAge(now), '暂无短信');
+    // 站点时间比手机快一点是常见的（时钟漂移），别显示成负数。
+    _eq(
+      '未来时间不显示负数',
+      NumberEntry(
+        digits: '1',
+        lastTextAt: DateTime.utc(2026, 10, 29, 21, 5, 30),
+      ).describeAge(now),
+      '刚刚',
     );
   }
 }
