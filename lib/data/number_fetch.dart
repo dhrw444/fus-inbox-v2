@@ -21,11 +21,8 @@ import 'number_entry.dart';
 ///
 /// 带上 [retryable]：上层靠它决定「重试」还是「直接告诉用户别试了」。
 /// 靠解析消息字符串判断太脆。
-class const NumberFetchError(
-  this.message, {
-  this.retryable = true,
-}) implements Exception {
-
+class const NumberFetchError(this.message, {this.retryable = true})
+    implements Exception {
   final String message;
   final bool retryable;
 
