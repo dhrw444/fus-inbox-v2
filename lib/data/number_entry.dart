@@ -206,7 +206,7 @@ List<NumberEntry> _parseBareLinks(String html) {
 }
 
 /// 取第一个捕获组，没有匹配返回 null。
-String? _firstGroup(RegExpMatch? m) => m == null ? null : m.group(1);
+String? _firstGroup(RegExpMatch? m) => m?.group(1);
 
 /// 从 `data-rel-time="2026-10-29T21:00:21"` 取绝对时间。
 ///

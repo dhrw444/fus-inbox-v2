@@ -199,18 +199,25 @@ void _pump(_SockReader client, _Tunnel up) {
 /// socket 的流只能订阅一次，而握手期间必须先同步读几个字节。这个类
 /// 把订阅收在自己手里：交接前收到的数据进缓冲、由 [take] 取；调用
 /// [attach] 之后，收到的数据直接写给对端，不再经过缓冲。
-class _SockReader {
-  _SockReader(this.socket) {
-    _sub = socket.listen(
+class _SockReader(this.socket) {
+  /// 主构造器在头上声明的参数**不会自动成为字段**（与直觉相反，
+  /// 但编译器这么定的）—— 字段仍要在体内声明，两处靠名字对上。
+  /// 少了这一行，体内所有 `socket.xxx` 都解析不到。
+  final Socket socket;
+
+  /// 订阅。**不能放构造函数里** —— 用主构造器写法之后构造函数没有体，
+  /// 而且字段存了订阅会被判「赋了从不读」。改成第一次用时再挂。
+  bool _hooked = false;
+  void _hook() {
+    if (_hooked) return;
+    _hooked = true;
+    socket.listen(
       _onData,
       onDone: _onDone,
       onError: (_) => _onDone(),
       cancelOnError: true,
     );
   }
-
-  final Socket socket;
-  late final StreamSubscription<List<int>> _sub;
 
   final _buf = <int>[];
   Socket? _forwardTo;
@@ -250,6 +257,7 @@ class _SockReader {
 
   /// 精确取 [n] 个字节，不够就等。
   Future<List<int>> take(int n) async {
+    _hook();
     while (_buf.length < n && !_closed) {
       await _sleep();
     }
@@ -263,6 +271,7 @@ class _SockReader {
 
   /// 读到空行为止（HTTP 请求头）。
   Future<String> takeHead() async {
+    _hook();
     const cap = 64 * 1024;
     while (true) {
       final end = _headEnd(_buf);
