@@ -109,7 +109,6 @@ class const FusApp({super.key}) extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: theme.scheme(),
       darkTheme: theme.scheme(dark: true),
-      themeMode: ThemeMode.system,
       home: const HomePage(),
     );
   }

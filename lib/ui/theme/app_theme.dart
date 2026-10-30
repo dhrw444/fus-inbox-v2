@@ -40,7 +40,7 @@ class AppTheme(this.textTheme) {
 
   /// 按 (明暗, 对比度) 取一套。六个组合一个不缺。
   ThemeData scheme({
-    required bool dark,
+    bool dark = false,
     Contrast contrast = Contrast.standard,
   }) => _assemble(_pick(dark: dark, contrast: contrast));
 

@@ -166,7 +166,21 @@ void _checkPublicWidgetKey(String path, String src) {
 
 /// 类 / 枚举没用主构造器语法。
 ///
-/// 本仓库的方言是 `class const Foo({...}) extends X {` 与 `enum Foo() {`。
+/// 类 / 枚举没用主构造器语法。
+///
+/// 判据来自**实测**（沙箱 Dart 3.13.7），不是旧项目的写法：
+///
+/// ```
+/// enum A() { x, y }                    // 无参 → 空括号
+/// enum A(this.label) { x('X'); }       // 带参 → 主构造器带参数名
+///                                        //   `this.label` 直接声明字段，
+///                                        //   体内不用再写 const A(...)
+/// class C() { static const int n = 1; } // 纯静态 → 空括号
+/// ```
+///
+/// 踩过的两个错写法：
+/// - `enum A() { x('X'); const A(this.label); }` → `'A' is already declared`
+/// - `enum A() { x('X'); final String label; }` → 字段未初始化，编译报错
 void _checkPrimaryConstructors(String path, String src) {
   final lines = src.split('\n');
   for (var i = 0; i < lines.length; i++) {
@@ -174,7 +188,7 @@ void _checkPrimaryConstructors(String path, String src) {
 
     // ── class ──
     // `class X extends Y` / `class X {` 都是传统写法。
-    // **但纯静态类不该被要求主构造器**：`class X { static const ... }` 没有
+    // **纯静态类不该被要求主构造器**：`class X { static const ... }` 没有
     // 实例，写 `class X()` 只是满足规则、没有任何意义。判据是「类体里有没有
     // 非 static 的实例成员」—— 有才算缺构造器。
     final m = RegExp(r'^class ([A-Z]\w*)( extends| implements| \{)')
@@ -188,19 +202,19 @@ void _checkPrimaryConstructors(String path, String src) {
     }
 
     // ── enum ──
-    // 三种写法，前两种都合法：
-    //   enum X() { a, b }              无参 → 空括号
-    //   enum X { a('A'); const X(...); } 带参 → 显式构造器，**不能加空括号**
-    //                                    （加了会和显式构造器重名，编译直接报
-    //                                    「X is already declared」）
-    //   enum X { a, b }                传统写法 → 报
+    // 只报「传统写法 `enum X {`」。带参和无参都用主构造器：
+    //   enum X() { ... }           无参
+    //   enum X(this.label) { ... } 带参
     final e = RegExp(r'^enum ([A-Z]\w*) \{').firstMatch(l);
     if (e != null) {
       final name = e.group(1)!;
-      // 带参（枚举值后面跟括号）就不能用空括号写法。
-      if (!_enumHasArguments(lines, i)) {
-        _fail(path, i + 1, 'use_primary_constructors', 'enum $name 缺 ()');
-      }
+      final hasArgs = _enumHasArguments(lines, i);
+      _fail(
+        path,
+        i + 1,
+        'use_primary_constructors',
+        hasArgs ? 'enum $name 缺 (this.xxx)' : 'enum $name 缺 ()',
+      );
     }
   }
 }
@@ -213,13 +227,11 @@ bool _hasInstanceMember(List<String> lines, int classLine) {
   var opened = false;
   for (var i = classLine; i < lines.length; i++) {
     final l = lines[i];
-    depth += 'lbrace(l)'.replaceAll('lbrace', '{').allMatches(l).length;
+    depth += '{'.allMatches(l).length;
     depth -= '}'.allMatches(l).length;
     if (i == classLine && depth > 0) opened = true;
     if (opened && i > classLine) {
-      // 类体结束
       if (depth <= 0) break;
-      // 一层的成员声明
       final t = l.trim();
       if (depth == 1 &&
           t.isNotEmpty &&
@@ -236,8 +248,8 @@ bool _hasInstanceMember(List<String> lines, int classLine) {
 
 /// 这个枚举的枚举值带参数吗。
 ///
-/// `enum X { a('A'), b('B'); }` → true（必须显式构造器，不能加空括号）
-/// `enum X { a, b }` → false（可以用空括号）
+/// `enum X { a('A'), b('B'); }` → true（该写 `enum X(this.label)`）
+/// `enum X { a, b }` → false（该写 `enum X()`）
 bool _enumHasArguments(List<String> lines, int enumLine) {
   for (var i = enumLine; i < lines.length; i++) {
     final l = lines[i];

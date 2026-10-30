@@ -7,12 +7,10 @@
 /// 名字避开 `ThemeModeChoice.mode` 那种直译：这个枚举描述的是**用户的
 /// 选择**，不是最终生效的 [ThemeMode] —— 后者由 `跟随系统` 加上系统状态
 /// 推出来，两者混用会在「系统深色 + 用户选浅色」时判错。
-enum ThemeChoice {
+enum ThemeChoice(this.label) {
   system('跟随系统'),
   light('浅色'),
   dark('深色');
-
-  const ThemeChoice(this.label);
 
   final String label;
 
@@ -33,13 +31,11 @@ enum ThemeChoice {
 /// 所以它只在「至少抓过一次」之后才有意义 —— 界面要在没有本地记录时
 /// 说明这一点，否则用户选了「收录时间」看到的顺序和「号码顺序」一样，
 /// 会以为功能坏了。
-enum NumberSort {
+enum NumberSort(this.label) {
   recent('最近活跃'),
   firstSeen('收录时间'),
   messages('短信最多'),
   number('号码顺序');
-
-  const NumberSort(this.label);
 
   final String label;
 
@@ -54,14 +50,12 @@ enum NumberSort {
 }
 
 /// 目录页的两个视图。
-enum NumberTab {
+enum NumberTab(this.label) {
   /// 全部号码，按 [NumberSort] 排。
   all('全部'),
 
   /// 只看有短信的。
   active('有短信');
-
-  const NumberTab(this.label);
 
   final String label;
 }
