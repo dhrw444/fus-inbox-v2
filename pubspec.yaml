@@ -25,6 +25,10 @@ dependencies:
   # 用 `dart:io` 直接打接口拿不到数据。
   flutter_inappwebview: ^6.2.0-beta.3
 
+  # 测试里要数「原生视图被创建几次」，得注入安卓端实现。
+  # 钉成跟主包同一代次，避免解析到版本漂移。
+  flutter_inappwebview_android: ^1.2.0-beta.3
+
   # 存两样东西：上次用的 UA（重启读回，见 `core/user_agent.dart`）
   # 和上次选的出口。**都不含凭据** —— 出口的 id 不含密码，
   # 存的是清单里的那一条。

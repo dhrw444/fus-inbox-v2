@@ -89,7 +89,9 @@ class const InboxPage({
 class _InboxPageState() extends State<InboxPage> {
   final _store = InboxStore();
   final _scroll = ScrollController();
-  final _key = GlobalKey();
+
+  /// 重建标识跟着身份走 —— 理由见 [inboxViewKey]。
+  Key get _viewKey => inboxViewKey(currentProfile);
 
   VerifyRoundVal _round = VerifyRoundVal.fresh;
   String _scannerScript = '';
@@ -110,6 +112,10 @@ class _InboxPageState() extends State<InboxPage> {
 
   /// WebView 控制器。视图建好之前是 null。
   InAppWebViewController? _controller;
+
+  /// [_controller] 是哪一代视图给的。key 跟它不一致 = 视图已重建、
+  /// 旧控制器已销毁，别再往它身上导航（见 [controllerOwnsView]）。
+  Key? _controllerKey;
 
   Timer? _verifyTick;
   Timer? _loadMoreTick;
@@ -622,7 +628,7 @@ class _InboxPageState() extends State<InboxPage> {
                 color: const Color(0xFF10131A),
                 child: _ready && _visitorReady
                     ? buildWebView(
-                        key: _key,
+                        key: _viewKey,
                         userAgent: currentUserAgent,
                         // 首屏地址。**必须给** —— 少了它页面永远不加载，
                         // 详见 `buildWebView` 的注释。
@@ -654,7 +660,10 @@ class _InboxPageState() extends State<InboxPage> {
                           onError: _onError,
                           allowNavigation: _allowNavigation,
                         ),
-                        onCreated: (c) => _controller = c,
+                        onCreated: (c) {
+                          _controller = c;
+                          _controllerKey = _viewKey;
+                        },
                       )
                     : const SizedBox.shrink(),
               ),
@@ -1044,6 +1053,15 @@ class _InboxPageState() extends State<InboxPage> {
     _round = _round.restart();
     // 换了页面 = 新的一次访问，成功记录要重新挣。
     _remembered = false;
+    // 视图已经因为换身份重建过 → 旧控制器早被销毁。往它身上 `loadUrl`
+    // 会抛 `used after being disposed`，被下面 catch 成一条**假**的
+    // 「重新加载失败」。而且没必要：新视图创建时就带着 `initialUrl`，
+    // 它自己会加载。
+    if (!controllerOwnsView(controllerKey: _controllerKey, viewKey: _viewKey)) {
+      _armWatchdog();
+      _startVerifyTick();
+      return;
+    }
     try {
       await _controller?.loadUrl(
         urlRequest: URLRequest(url: WebUri(widget.inboxUrl)),

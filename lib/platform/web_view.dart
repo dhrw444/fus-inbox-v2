@@ -22,6 +22,9 @@ import 'dart:collection';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
+import '../data/identity_profile.dart';
+import '../data/identity_roster.dart';
+
 /// 内核设置。
 ///
 /// ## 只传「偏离默认值」的项
@@ -124,6 +127,37 @@ class const WebViewEvents({
 ///
 /// 空串是配置错误（调用方地址没解析出来），直接抛 —— 静默建一个白屏
 /// 视图比报错更难查。
+/// inbox WebView 的重建标识 —— **必须跟着身份走**。
+///
+/// 原生视图只在 key 变（或 viewType 变）时重建：插件把 key 原样交给
+/// `PlatformViewLink`，后者只在换成另一个平台视图时才重跑
+/// `onCreatePlatformView`。
+///
+/// 而 UA 和注入脚本（环境伪装）都只在**创建时**下发一次 ——
+/// `initialSettings` / `initialUserScripts`。插件里 `didUpdateWidget`
+/// 零命中，本仓也没人调 `setSettings`。用恒定的 `GlobalKey` 时换了身份
+/// 原生视图一动不动，站点看到的还是旧身份。
+///
+/// 实测见 `test/identity_view_key_test.dart`。
+Key inboxViewKey(IdentityProfile? profile) {
+  return ValueKey('inbox-wv-${profile == null ? '' : identityDigest(profile)}');
+}
+
+/// 手上这个控制器，是否还属于**当前这一代**视图。
+///
+/// [controllerKey] 是建控制器时那一次 `build` 用的 key。它和当前 key 不
+/// 一致 = key 变过 = 原生视图已经重建，旧控制器已被销毁。
+///
+/// 此时**不要**再往它身上导航：实测会抛
+/// `AndroidInAppWebViewController was used after being disposed`
+/// （`test/identity_view_key_test.dart`），而调用点又把异常 catch 成
+/// 「重新加载失败」—— 一次纯粹的误报。而且没必要：新视图创建时就带着
+/// `initialUrl`，它自己会加载。
+bool controllerOwnsView({required Key? controllerKey, required Key viewKey}) {
+  return controllerKey == viewKey;
+}
+
+/// [key] 必须是 [inboxViewKey] 的结果 —— 别传恒定 key，理由见那里。
 Widget buildWebView({
   required Key key,
   required String userAgent,
