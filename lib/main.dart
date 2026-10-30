@@ -44,11 +44,7 @@ final store = Store();
 Future<Set<String>> readStars() async {
   final raw = await store.read(kStarsKey);
   if (raw == null || raw.isEmpty) return <String>{};
-  return raw
-      .split(',')
-      .map((s) => s.trim())
-      .where((s) => s.isNotEmpty)
-      .toSet();
+  return raw.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty).toSet();
 }
 
 /// 写收藏。

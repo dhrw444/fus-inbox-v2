@@ -206,8 +206,9 @@ Future<WipeResult> wipeSiteData(InAppWebViewController controller) async {
       indexedDb: decoded['db'] == true,
       localStorage: decoded['ls'] == true,
       sessionStorage: decoded['ss'] == true,
-      databaseNames:
-          names is List ? names.whereType<String>().toList() : const [],
+      databaseNames: names is List
+          ? names.whereType<String>().toList()
+          : const [],
       blocked: decoded['blocked'] == true,
     );
   } catch (_) {

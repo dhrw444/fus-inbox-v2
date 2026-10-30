@@ -288,8 +288,7 @@ class _NumbersPageState() extends State<NumbersPage> {
                       setState(() => _filter = _filter.copyWith(query: '')),
                 ),
         ),
-        onChanged: (v) =>
-            setState(() => _filter = _filter.copyWith(query: v)),
+        onChanged: (v) => setState(() => _filter = _filter.copyWith(query: v)),
       ),
     );
   }
@@ -316,9 +315,8 @@ class _NumbersPageState() extends State<NumbersPage> {
               avatar: const Icon(Icons.star, size: 16),
               label: const Text('收藏'),
               selected: _filter.starredOnly,
-              onSelected: (v) => setState(
-                () => _filter = _filter.copyWith(starredOnly: v),
-              ),
+              onSelected: (v) =>
+                  setState(() => _filter = _filter.copyWith(starredOnly: v)),
             ),
           ),
           // 排序下拉放在页签同一行：三个维度一起改，不占额外高度。
@@ -389,9 +387,7 @@ class _NumbersPageState() extends State<NumbersPage> {
 
   Widget _buildList(ThemeData theme, List<DirectoryRow> rows) {
     if (rows.isEmpty) {
-      return Center(
-        child: Text('没有匹配的号码', style: theme.textTheme.bodyLarge),
-      );
+      return Center(child: Text('没有匹配的号码', style: theme.textTheme.bodyLarge));
     }
     final now = DateTime.now();
     return ListView.builder(

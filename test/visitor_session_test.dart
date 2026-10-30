@@ -175,10 +175,10 @@ void main() {
         switchEgress: fake.switchTo,
         applyIdentity: (p) => fake.applied.add(p.userAgent),
         mintIdentity: () => _profile(++mintSeq),
-      wipeSiteData: () async {
-        wipes++;
-        return true;
-      },
+        wipeSiteData: () async {
+          wipes++;
+          return true;
+        },
         clock: () => later,
         random: Random(7),
       );
@@ -316,23 +316,25 @@ void main() {
 
   group('清站点数据的结果要如实说出来', () {
     /// 造一个 wipe 结果固定的会话。
-    VisitorSession make(bool? Function() wipe, {Future<void> Function()? mark}) =>
-        VisitorSession(
-          book: book,
-          roster: roster,
-          currentEgress: () => fake.current,
-          egressPool: () => fake.pool,
-          switchEgress: fake.switchTo,
-          applyIdentity: (p) => fake.applied.add(p.userAgent),
-          mintIdentity: () => _profile(++mintSeq),
-          wipeSiteData: () async {
-            wipes++;
-            return wipe();
-          },
-          markWipePending: mark,
-          clock: () => now,
-          random: Random(11),
-        );
+    VisitorSession make(
+      bool? Function() wipe, {
+      Future<void> Function()? mark,
+    }) => VisitorSession(
+      book: book,
+      roster: roster,
+      currentEgress: () => fake.current,
+      egressPool: () => fake.pool,
+      switchEgress: fake.switchTo,
+      applyIdentity: (p) => fake.applied.add(p.userAgent),
+      mintIdentity: () => _profile(++mintSeq),
+      wipeSiteData: () async {
+        wipes++;
+        return wipe();
+      },
+      markWipePending: mark,
+      clock: () => now,
+      random: Random(11),
+    );
 
     test('清不了（页面还没建）→ 打待清标记，且不说成「没清干净」', () async {
       var marked = 0;
@@ -372,7 +374,13 @@ void main() {
       final b = VisitorBook();
       const v = Visitor(egressId: 'socks5://1.1.1.1:1080', identityId: 'abc');
       b.rememberGood('4044225634', v, now);
-      b.block('socks5://2.2.2.2:1080', 'def', now, temporary: false, retrySeconds: 30);
+      b.block(
+        'socks5://2.2.2.2:1080',
+        'def',
+        now,
+        temporary: false,
+        retrySeconds: 30,
+      );
 
       final json = b.toJson();
       final b2 = VisitorBook()..restore(json);

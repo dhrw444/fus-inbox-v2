@@ -667,9 +667,7 @@ class _InboxPageState() extends State<InboxPage> {
           child: TextButton.icon(
             onPressed: _store.revealMore,
             icon: const Icon(Icons.expand_more, size: 18),
-            label: Text(
-              '显示更多（还有 ${st.messages.length - st.visible} 条）',
-            ),
+            label: Text('显示更多（还有 ${st.messages.length - st.visible} 条）'),
           ),
         ),
       );

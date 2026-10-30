@@ -86,7 +86,10 @@ void _testBlocked() {
     b.block('e1', 'i1', t0, temporary: false, retrySeconds: 60);
     _ok('刚撞不能用', !b.usable('e1', 'i1', t0));
     _eq('还剩 60 秒', b.waitFor('e1', 'i1', t0), const Duration(seconds: 60));
-    _ok('到期前 1 秒仍不能用', !b.usable('e1', 'i1', t0.add(const Duration(seconds: 59))));
+    _ok(
+      '到期前 1 秒仍不能用',
+      !b.usable('e1', 'i1', t0.add(const Duration(seconds: 59))),
+    );
     _ok('到期后能用', b.usable('e1', 'i1', t0.add(const Duration(seconds: 60))));
     _eq('过期记录被删', b.blockedCount, 0);
   }
@@ -134,8 +137,11 @@ void _testPlan() {
     final b = VisitorBook();
     b.block('e1', 'i1', t0, temporary: false, retrySeconds: 60);
     final p = b.plan(
-      egressId: 'e1', identityId: 'i1', now: t0,
-      otherEgresses: others, otherIdentities: otherIds,
+      egressId: 'e1',
+      identityId: 'i1',
+      now: t0,
+      otherEgresses: others,
+      otherIdentities: otherIds,
     );
     _ok('两样都换', p.switchEgress && p.switchIdentity);
     _ok('没判出口有问题', !p.egressSuspect);
@@ -148,8 +154,11 @@ void _testPlan() {
     b.block('e1', 'i1', t0, temporary: false, retrySeconds: 60);
     b.block('e1', 'i2', t0, temporary: false, retrySeconds: 60);
     final p = b.plan(
-      egressId: 'e1', identityId: 'i1', now: t0,
-      otherEgresses: others, otherIdentities: otherIds,
+      egressId: 'e1',
+      identityId: 'i1',
+      now: t0,
+      otherEgresses: others,
+      otherIdentities: otherIds,
     );
     _ok('判出口有问题', p.egressSuspect);
     _ok('换出口', p.switchEgress);
@@ -163,8 +172,11 @@ void _testPlan() {
     b.block('e1', 'i1', t0, temporary: false, retrySeconds: 60);
     b.block('e2', 'i1', t0, temporary: false, retrySeconds: 60);
     final p = b.plan(
-      egressId: 'e1', identityId: 'i1', now: t0,
-      otherEgresses: others, otherIdentities: otherIds,
+      egressId: 'e1',
+      identityId: 'i1',
+      now: t0,
+      otherEgresses: others,
+      otherIdentities: otherIds,
     );
     _ok('判身份有问题', p.identitySuspect);
     _ok('换身份', p.switchIdentity);
@@ -176,8 +188,11 @@ void _testPlan() {
     final b = VisitorBook();
     b.block('e1', 'i1', t0, temporary: false, retrySeconds: 60);
     final p = b.plan(
-      egressId: 'e1', identityId: 'i1', now: t0,
-      otherEgresses: const [], otherIdentities: const [],
+      egressId: 'e1',
+      identityId: 'i1',
+      now: t0,
+      otherEgresses: const [],
+      otherIdentities: const [],
     );
     _ok('换不了', p.isNoop);
     _ok('说出了原因', p.explain().contains('只能等'));
@@ -188,8 +203,11 @@ void _testPlan() {
     final b = VisitorBook();
     b.block('e1', 'i1', t0, temporary: false, retrySeconds: 60);
     final p = b.plan(
-      egressId: 'e1', identityId: 'i1', now: t0,
-      otherEgresses: others, otherIdentities: otherIds,
+      egressId: 'e1',
+      identityId: 'i1',
+      now: t0,
+      otherEgresses: others,
+      otherIdentities: otherIds,
     );
     // 当前这一对当然是被拒的，但那不该被算成「出口有问题」。
     _ok('自己那一对不算证据', !p.egressSuspect && !p.identitySuspect);

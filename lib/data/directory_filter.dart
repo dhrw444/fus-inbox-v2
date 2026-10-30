@@ -97,10 +97,8 @@ const kLiveWindow = Duration(minutes: 10);
 sealed class const DirectoryRow();
 
 /// 一个号码行。
-class const NumberRow({
-  required this.entry,
-  required this.starred,
-}) extends DirectoryRow {
+class const NumberRow({required this.entry, required this.starred})
+    extends DirectoryRow {
   final NumberEntry entry;
   final bool starred;
 }
@@ -174,9 +172,7 @@ List<DirectoryRow> applyDirectoryFilter({
   }
 
   // ④ 排序。
-  list.sort(
-    (a, b) => _compare(a, b, filter.sort, firstSeenOf),
-  );
+  list.sort((a, b) => _compare(a, b, filter.sort, firstSeenOf));
 
   // ⑤ 按州页签：同一州聚到一起，前面插标题行。
   if (filter.tab == NumberTab.byState) {
@@ -184,8 +180,7 @@ List<DirectoryRow> applyDirectoryFilter({
   }
 
   return [
-    for (final e in list)
-      NumberRow(entry: e, starred: starredOf(e.digits)),
+    for (final e in list) NumberRow(entry: e, starred: starredOf(e.digits)),
   ];
 }
 
@@ -261,8 +256,7 @@ List<DirectoryRow> _groupByState(
       ..sort((a, b) => _compare(a, b, sort, firstSeenOf));
     out.add(GroupRow(title: name, count: items.length));
     out.addAll([
-      for (final e in items)
-        NumberRow(entry: e, starred: starredOf(e.digits)),
+      for (final e in items) NumberRow(entry: e, starred: starredOf(e.digits)),
     ]);
   }
   return out;

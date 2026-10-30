@@ -35,6 +35,7 @@ library;
 class const Visitor({
   /// 出口标识（`ProxyConfig.id`，`scheme://host:port`，不含密码）。
   required this.egressId,
+
   /// 身份标识（UA 的稳定摘要，不含完整 UA）。
   required this.identityId,
 }) {
@@ -105,7 +106,11 @@ class VisitorBook() {
   /// 因为站点的状态会变，旧记录的价值低于新记录。
   void rememberGood(String numberDigits, Visitor v, DateTime now) {
     if (numberDigits.isEmpty) return;
-    _hits[numberDigits] = _Hit(egressId: v.egressId, identityId: v.identityId, at: now);
+    _hits[numberDigits] = _Hit(
+      egressId: v.egressId,
+      identityId: v.identityId,
+      at: now,
+    );
   }
 
   /// 忘掉这个号码的记录（比如它已经不可用了）。
@@ -150,7 +155,9 @@ class VisitorBook() {
   /// 解绑一个身份（连带反向索引和它名下的拒绝记录）。
   void forgetIdentity(String identityId) {
     final eg = _boundEgress.remove(identityId);
-    if (eg != null && _boundIdentity[eg] == identityId) _boundIdentity.remove(eg);
+    if (eg != null && _boundIdentity[eg] == identityId) {
+      _boundIdentity.remove(eg);
+    }
     _blockedUntil.removeWhere((k, _) => k.endsWith('|$identityId'));
     _hits.removeWhere((_, h) => h.identityId == identityId);
   }
@@ -215,7 +222,11 @@ class VisitorBook() {
   Map<String, Object?> toJson() => {
     'hits': {
       for (final e in _hits.entries)
-        e.key: [e.value.egressId, e.value.identityId, e.value.at.millisecondsSinceEpoch],
+        e.key: [
+          e.value.egressId,
+          e.value.identityId,
+          e.value.at.millisecondsSinceEpoch,
+        ],
     },
     'bound': _boundIdentity,
     'blocked': {
@@ -294,7 +305,8 @@ class VisitorBook() {
   }) {
     // ① 这个号码有成功记录吗？有就直接用那个。
     final remembered = visitorFor(numberDigits, now);
-    if (remembered != null && usable(remembered.egressId, remembered.identityId, now)) {
+    if (remembered != null &&
+        usable(remembered.egressId, remembered.identityId, now)) {
       return OpenVisitor(
         visitor: remembered,
         reuse: true,

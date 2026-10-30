@@ -41,10 +41,7 @@ void main() {
         now: _now,
       );
       expect(s, isNotNull);
-      expect(
-        s!.directoryFirstSeenAt,
-        DateTime.utc(2026, 10, 29, 13, 23, 6),
-      );
+      expect(s!.directoryFirstSeenAt, DateTime.utc(2026, 10, 29, 13, 23, 6));
       // 收录时间必须早于第一条短信 —— 号码先进目录才收到短信。
       expect(
         s.directoryFirstSeenAt!.isBefore(s.firstRetainedAt!),
@@ -102,7 +99,11 @@ void main() {
 
     test('页面里没有这块就返回 null，不抛', () {
       expect(
-        parseNumberInsights('<html><body>空</body></html>', wantDigits: '1', now: _now),
+        parseNumberInsights(
+          '<html><body>空</body></html>',
+          wantDigits: '1',
+          now: _now,
+        ),
         isNull,
       );
     });
@@ -176,21 +177,13 @@ void main() {
 
     test('还没查 vs 查过没有，说法不同', () {
       final now = DateTime.utc(2026, 10, 30, 12);
-      expect(
-        describeFirstSeen(FirstSeenInfo.unknown, now),
-        '收录时间未查到',
-      );
-      expect(
-        describeFirstSeen(FirstSeenInfo.absent, now),
-        '收录时间未记录',
-      );
+      expect(describeFirstSeen(FirstSeenInfo.unknown, now), '收录时间未查到');
+      expect(describeFirstSeen(FirstSeenInfo.absent, now), '收录时间未记录');
     });
 
     test('精确时刻是 UTC 且补零', () {
       expect(
-        exactFirstSeen(
-          FirstSeenInfo(at: DateTime.utc(2026, 1, 5, 3, 7)),
-        ),
+        exactFirstSeen(FirstSeenInfo(at: DateTime.utc(2026, 1, 5, 3, 7))),
         '2026-01-05 03:07 UTC',
       );
       expect(exactFirstSeen(FirstSeenInfo.unknown), '');

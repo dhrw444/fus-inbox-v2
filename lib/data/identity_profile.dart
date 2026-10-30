@@ -183,10 +183,7 @@ class const IdentityProfile({
   ///
   /// [kernelMajor] 是内核报的真实 Chrome 大版本。新身份的版本在它
   /// ±2 之间 —— 编一个和内核差十代的版本号，比不换更可疑。
-  static IdentityProfile mint({
-    required int kernelMajor,
-    Random? rnd,
-  }) {
+  static IdentityProfile mint({required int kernelMajor, Random? rnd}) {
     final r = rnd ?? Random();
 
     // 机型 + 安卓版本一起挑：一对自洽的组合。

@@ -4,17 +4,29 @@ import 'package:fus_inbox/platform/site_wipe.dart';
 void main() {
   group('清站点数据的判定', () {
     test('库删了 + 凭证删了 → 算清干净', () {
-      const r = WipeResult(indexedDb: true, localStorage: true, sessionStorage: true);
+      const r = WipeResult(
+        indexedDb: true,
+        localStorage: true,
+        sessionStorage: true,
+      );
       expect(r.identityCleared, isTrue);
     });
 
     test('库没删 → 不算清干净（密钥还在就是同一个人）', () {
-      const r = WipeResult(indexedDb: false, localStorage: true, sessionStorage: true);
+      const r = WipeResult(
+        indexedDb: false,
+        localStorage: true,
+        sessionStorage: true,
+      );
       expect(r.identityCleared, isFalse);
     });
 
     test('凭证没删 → 不算清干净', () {
-      const r = WipeResult(indexedDb: true, localStorage: false, sessionStorage: true);
+      const r = WipeResult(
+        indexedDb: true,
+        localStorage: false,
+        sessionStorage: true,
+      );
       expect(r.identityCleared, isFalse);
     });
 
@@ -25,8 +37,7 @@ void main() {
         sessionStorage: true,
         blocked: true,
       );
-      expect(r.identityCleared, isFalse,
-          reason: 'blocked 时库很可能还在，报成功会让上层不再重试');
+      expect(r.identityCleared, isFalse, reason: 'blocked 时库很可能还在，报成功会让上层不再重试');
     });
 
     test('failed 常量本身不算清干净', () {

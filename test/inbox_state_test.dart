@@ -5,7 +5,8 @@ import 'package:fus_inbox/data/inbox_store.dart';
 String frameJson(int n) {
   final items = List.generate(
     n,
-    (i) => '{"id":"$i","text":"body $i","sender":"s","time":"2026-10-30T10:00:00Z"}',
+    (i) =>
+        '{"id":"$i","text":"body $i","sender":"s","time":"2026-10-30T10:00:00Z"}',
   );
   return '{"type":"messages","items":[${items.join(',')}],"hits":1,"source":"dom"}';
 }

@@ -252,7 +252,8 @@ LoadFailure describeLoadFailure(
       retryable: true,
     );
   }
-  if (d.contains('err_connection_reset') || d.contains('err_connection_closed')) {
+  if (d.contains('err_connection_reset') ||
+      d.contains('err_connection_closed')) {
     return const LoadFailure(
       title: '连接被中断',
       detail: '这条出口不稳定。换一条试试。',

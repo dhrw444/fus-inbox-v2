@@ -68,7 +68,6 @@ bool resetIdentity() {
   return true;
 }
 
-
 /// 造一个身份随机数。注入进来是为了可测。
 typedef RandomSource = Random Function();
 

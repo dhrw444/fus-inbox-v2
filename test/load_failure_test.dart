@@ -5,7 +5,11 @@ void main() {
   group('错误翻译', () {
     test('枚举名优先于原生码', () {
       // 枚举说 HOST_LOOKUP，码给 -8（TIMEOUT）—— 该按枚举走。
-      final f = describeLoadFailure(-8, 'net::ERR_TIMED_OUT', kind: 'HOST_LOOKUP');
+      final f = describeLoadFailure(
+        -8,
+        'net::ERR_TIMED_OUT',
+        kind: 'HOST_LOOKUP',
+      );
       expect(f.title, '域名解析不了');
     });
 
@@ -34,7 +38,11 @@ void main() {
         '设备没联网',
       );
       expect(
-        describeLoadFailure(null, '', kind: 'SERVER_CERTIFICATE_UNTRUSTED').title,
+        describeLoadFailure(
+          null,
+          '',
+          kind: 'SERVER_CERTIFICATE_UNTRUSTED',
+        ).title,
         '证书有问题',
       );
       expect(
