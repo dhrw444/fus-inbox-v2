@@ -31,9 +31,11 @@ import 'package:flutter/services.dart'
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import '../core/user_agent.dart';
+import '../data/egress.dart';
 import '../data/inbox_state.dart';
 import '../data/inbox_store.dart';
 import '../data/verify_round.dart';
+import '../main.dart' show egress;
 import '../platform/web_view.dart';
 import 'widgets/message_card.dart';
 
@@ -95,6 +97,29 @@ class _InboxPageState() extends State<InboxPage> {
     unawaited(_loadScript());
     _armWatchdog();
     _startVerifyTick();
+    // 把 WebView 的流量指到桥。
+    //
+    // **这一步必须在页面加载之前** —— 代理是进程级的，页面已经开始
+    // 加载时再设，第一个请求已经用真实 IP 发出去了。而且必须在这里做，
+    // 不能只依赖首页那次设置：桥可能被重建（换出口），端口变了，
+    // 而 `ProxyController` 的 override 还指着旧端口。
+    unawaited(_applyProxy());
+  }
+
+  /// 应用当前出口到 WebView。
+  ///
+  /// 直连时传 0 → 清掉 override，回到系统代理设置。
+  Future<void> _applyProxy() async {
+    try {
+      await applyWebViewProxy(
+        egress.choice == ProxyChoice.proxy ? egress.port : 0,
+      );
+    } catch (e) {
+      // 设不上代理不是致命错误 —— 页面照样能开，只是走真实 IP。
+      // 但**必须说出来**：用户以为在走代理而实际没有，是这里最坏的失败。
+      if (!mounted) return;
+      _store.note('代理没设上（$e），这一页走的是本机 IP。');
+    }
   }
 
   @override
@@ -117,7 +142,7 @@ class _InboxPageState() extends State<InboxPage> {
 
   Future<void> _loadScript() async {
     try {
-      final text = await rootBundle.loadString('assets2/scanner.js');
+      final text = await rootBundle.loadString('assets/scanner.js');
       if (!mounted) return;
       setState(() {
         _scannerScript = text;
@@ -603,7 +628,7 @@ class _InboxPageState() extends State<InboxPage> {
 
   /// 页面加载完。
   ///
-  /// 抓取层自己会扫描 + 挂钩（见 `assets2/scanner.js` 的 `start()`），
+  /// 抓取层自己会扫描 + 挂钩（见 `assets/scanner.js` 的 `start()`），
   /// 这里只需要在**第一次**加载完成时把 `_ready` 立起来，让验证驱动器
   /// 开始跑。
   void _onPageFinished(String url) {

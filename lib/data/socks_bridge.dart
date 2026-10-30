@@ -129,6 +129,14 @@ class SocksBridge() {
   /// 要跑二十秒，久了就没人跑。
   Duration headTimeout = const Duration(seconds: 20);
 
+  /// 上游 SOCKS5 握手的每一步最多等多久。
+  ///
+  /// 三条出口实测里最常见的一种「坏出口」不是连不上，而是**连上之后
+  /// 不说话**（或是认证过了但 CONNECT 迟迟不回）。`Socket.connect` 的
+  /// 超时只覆盖「三次握手完成」那一步，握手字节的读取完全没有期限 ——
+  /// 一条这样的出口会把一条连接和两个 fd 永久占住。
+  Duration handshakeTimeout = const Duration(seconds: 8);
+
   /// 处理一条来自 WebView 的连接。
   Future<void> _handle(Socket client) async {
     // Nagle 会把小包攒起来再发，对隧道就是平白加一层延迟。
@@ -168,9 +176,15 @@ class SocksBridge() {
 
     _Tunnel tunnel;
     try {
-      tunnel = _upstream == null
+      final up = _upstream;
+      tunnel = up == null
           ? await _connectDirect(host, port)
-          : await _connectViaSocks(_upstream!, host, port);
+          // 按协议分派。**不能一律当 SOCKS5** —— 用户手填 `http://` 的
+          // 出口很常见（本机 mihomo 之类），对它发 `\x05\x01\x02` 会得到
+          // 「上游不是 SOCKS5（版本号 72）」，而 72 是字母 'H'。
+          : up.scheme.needsBridge
+          ? await _connectViaSocks(up, host, port, handshakeTimeout)
+          : await _connectViaHttp(up, host, port, handshakeTimeout, method);
     } catch (e) {
       lastError = '$e';
       _fail(client, 502, '$e');
@@ -303,10 +317,29 @@ class _SockReader(this.socket) {
   }
 
   /// 精确取 [n] 个字节，不够就等。
-  Future<List<int>> take(int n) async {
+  ///
+  /// [timeout] 是**必须给**的（除了测试里的假上游）：上游连上却不说话时
+  /// 这个 await 会永久挂着。`Socket.connect` 的超时只管到「连上」为止，
+  /// 握手这几步读字节全是无期限等 —— 表现是桥不动、fd 不释放，
+  /// 而界面只看到「一直转圈」。
+  Future<List<int>> take(int n, {Duration? timeout}) async {
     _hook();
     while (_buf.length < n && !_closed) {
-      await _sleep();
+      final wait = _sleep();
+      if (timeout == null) {
+        await wait;
+      } else {
+        try {
+          await wait.timeout(timeout);
+        } on TimeoutException {
+          // 把 `TimeoutException after 0:00:08.000000: Future not completed`
+          // 换成人话 —— 那句话会原样出现在界面的失败面板上。
+          throw StateError(
+            '${timeout.inMilliseconds < 1000 ? '${timeout.inMilliseconds} 毫秒' : '${timeout.inSeconds} 秒'}'
+            '内没收到对端应答',
+          );
+        }
+      }
     }
     if (_buf.length < n) {
       throw StateError('连接在收够 $n 字节之前就断了');
@@ -380,7 +413,12 @@ Future<_Tunnel> _connectDirect(String host, int port) async {
 ///   ③ 请求：让它 CONNECT 到目标
 ///   ④ 应答：读掉它回的绑定地址（**必须读干净**，否则那几个字节会被
 ///      当成隧道里的数据吐给客户端，网页第一个字符就乱了）
-Future<_Tunnel> _connectViaSocks(ProxyConfig p, String host, int port) async {
+Future<_Tunnel> _connectViaSocks(
+  ProxyConfig p,
+  String host,
+  int port,
+  Duration step,
+) async {
   final socket = await Socket.connect(
     p.host,
     p.port,
@@ -392,7 +430,7 @@ Future<_Tunnel> _connectViaSocks(ProxyConfig p, String host, int port) async {
     // ── ① 问候 ──
     socket.add(<int>[0x05, 0x01, p.hasAuth ? 0x02 : 0x00]);
     await socket.flush();
-    final greet = await reader.take(2);
+    final greet = await reader.take(2, timeout: step);
     if (greet[0] != 0x05) {
       throw StateError('上游不是 SOCKS5（版本号 ${greet[0]}）');
     }
@@ -411,7 +449,7 @@ Future<_Tunnel> _connectViaSocks(ProxyConfig p, String host, int port) async {
       if (u.length > 255 || pw.length > 255) throw StateError('代理凭据过长');
       socket.add(<int>[0x01, u.length, ...u, pw.length, ...pw]);
       await socket.flush();
-      final ok = await reader.take(2);
+      final ok = await reader.take(2, timeout: step);
       if (ok[1] != 0x00) throw StateError('上游拒绝认证（用户名或密码不对）');
     }
 
@@ -433,7 +471,7 @@ Future<_Tunnel> _connectViaSocks(ProxyConfig p, String host, int port) async {
     await socket.flush();
 
     // ── ④ 应答 ──
-    final rep = await reader.take(4);
+    final rep = await reader.take(4, timeout: step);
     if (rep[1] != 0x00) throw StateError(_socksError(rep[1]));
     var skip = 0;
     if (rep[3] == 0x01) {
@@ -441,17 +479,88 @@ Future<_Tunnel> _connectViaSocks(ProxyConfig p, String host, int port) async {
     } else if (rep[3] == 0x04) {
       skip = 16; // IPv6
     } else if (rep[3] == 0x03) {
-      skip = (await reader.take(1))[0]; // 域名，长度在前一字节
+      skip = (await reader.take(1, timeout: step))[0]; // 域名，长度在前一字节
     } else {
       throw StateError('上游回了看不懂的地址类型 ${rep[3]}');
     }
-    await reader.take(skip + 2); // 地址本体 + 端口
+    await reader.take(skip + 2, timeout: step); // 地址本体 + 端口
 
     return _Tunnel(socket: socket, reader: reader, hop: '$host:$port');
   } catch (e) {
     _shut(socket);
     rethrow;
   }
+}
+
+/// 连上 HTTP 代理，让它替我们连到 [host]:[port]。
+///
+/// ## 和 SOCKS5 的区别
+///
+/// SOCKS5 是「先握手，再隧道」——`CONNECT` 成功之后双方就只传裸字节。
+/// HTTP 代理没有握手阶段：**`CONNECT` 请求本身就是握手**，代理回
+/// `200 Connection Established` 之后才开始隧道。
+///
+/// ## 凭据放在哪
+///
+/// HTTP 代理的认证是**请求头**（`Proxy-Authorization: Basic ...`），
+/// 不是握手字节 —— 这正是桥存在的理由之一：`findProxy` 的指令串里
+/// 塞不进这个头，只能在这里补。
+///
+/// ## 只在 CONNECT 上加认证
+///
+/// 绝对地址的 `GET`（也就是「非 CONNECT」分支）已经带上了客户端自己
+/// 的 `Proxy-Authorization`（如果客户端会发的话），这里再补一个会变成
+/// 两个头。所以只在 CONNECT 这条路径上补，绝对地址路径原样转发。
+Future<_Tunnel> _connectViaHttp(
+  ProxyConfig p,
+  String host,
+  int port,
+  Duration step,
+  String method,
+) async {
+  final socket = await Socket.connect(
+    p.host,
+    p.port,
+    timeout: const Duration(seconds: 12),
+  );
+  socket.setOption(SocketOption.tcpNoDelay, true);
+  final reader = _SockReader(socket);
+  try {
+    // 认证头：`Basic base64(user:pass)`。RFC 7617。
+    final auth = p.hasAuth
+        ? 'Proxy-Authorization: Basic '
+              '${base64.encode(utf8.encode('${p.user}:${p.password}'))}\r\n'
+        : '';
+    socket.write(
+      'CONNECT $host:$port HTTP/1.1\r\n'
+      'Host: $host:$port\r\n'
+      '$auth'
+      // 有些代理（Squid 老版本）不认没有 UA 的 CONNECT。
+      'User-Agent: fus-inbox\r\n\r\n',
+    );
+    await socket.flush();
+
+    final head = await reader.takeHead(timeout: step);
+    final status = _statusOf(head);
+    if (status == 407) {
+      throw StateError('上游要求代理认证（407），这条出口的账号密码不对或没填');
+    }
+    if (status != 200) {
+      throw StateError('上游拒绝 CONNECT（HTTP $status）');
+    }
+    return _Tunnel(socket: socket, reader: reader, hop: '$host:$port');
+  } catch (e) {
+    _shut(socket);
+    rethrow;
+  }
+}
+
+/// 从响应头里取状态码。取不到返回 0。
+int _statusOf(String head) {
+  final line = head.split('\r\n').first;
+  final parts = line.split(' ');
+  if (parts.length < 2) return 0;
+  return int.tryParse(parts[1]) ?? 0;
 }
 
 /// SOCKS5 应答码 → 人话。

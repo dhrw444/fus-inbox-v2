@@ -45,6 +45,43 @@ InAppWebViewSettings webViewSettings(String userAgent) => InAppWebViewSettings(
   javaScriptCanOpenWindowsAutomatically: true,
 );
 
+/// 把 WebView 的流量指到本地桥。
+///
+/// ## 为什么必须用 `ProxyController` 而不是别的东西
+///
+/// 安卓 WebView 的代理是**进程级**的，只能通过 `androidx.webkit` 的
+/// `ProxyController` 设。`flutter_inappwebview` 把它包成了
+/// [ProxyController.setProxyOverride]。
+///
+/// 两个容易踩的点：
+///
+///   1. **它是静态的、整个进程生效**，不是「这个 WebView 的代理」。
+///      所以收件页和目录页用的是同一个出口 —— 这符合预期（一个出口 =
+///      一个 IP，两处不一致反而奇怪）。
+///   2. **`ProxyRule.url` 的格式是 `[scheme://]host[:port]`，不带凭据**。
+///      这正是本地桥存在的理由：认证得在桥那边补。
+///
+/// [port] 为 0 表示清掉代理（回到系统设置）。
+Future<void> applyWebViewProxy(int port) async {
+  final c = ProxyController.instance();
+  if (port <= 0) {
+    try {
+      await c.clearProxyOverride();
+    } catch (_) {
+      // 本来就没设过。清不掉不算错。
+    }
+    return;
+  }
+  await c.setProxyOverride(
+    settings: ProxySettings(
+      proxyRules: [ProxyRule(url: 'http://127.0.0.1:$port')],
+      // 本地回环默认就会绕过代理，必须显式关掉这条隐式规则，
+      // 否则 WebView 请求 `127.0.0.1` 时直接连，桥白搭。
+      removeImplicitRules: true,
+    ),
+  );
+}
+
 /// 页面事件。内核回调统一转成这几个，界面层只认它们。
 class const WebViewEvents({
   /// 主框架开始加载。

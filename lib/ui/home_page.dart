@@ -8,6 +8,8 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show FilteringTextInputFormatter;
 
+import '../main.dart' show egress;
+import 'egress_page.dart';
 import 'inbox_page.dart';
 import 'numbers_page.dart';
 
@@ -71,7 +73,22 @@ class _HomePageState() extends State<HomePage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Scaffold(
-      appBar: AppBar(title: const Text('短信查看器')),
+      appBar: AppBar(
+        title: const Text('短信查看器'),
+        actions: [
+          IconButton(
+            tooltip: '出口设置',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => EgressPage(egress: egress),
+                ),
+              );
+            },
+            icon: const Icon(Icons.vpn_lock_outlined),
+          ),
+        ],
+      ),
       body: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
@@ -82,7 +99,11 @@ class _HomePageState() extends State<HomePage> {
             OutlinedButton.icon(
               onPressed: () {
                 Navigator.of(context).push(
-                  MaterialPageRoute<void>(builder: (_) => const NumbersPage()),
+                  MaterialPageRoute<void>(
+                    // 出口解析器是**回调**，不是快照 —— 桥的端口会变
+                    // （换出口、重启），抓一个快照就等于永远指向死端口。
+                    builder: (_) => NumbersPage(resolveEgress: egress.egress),
+                  ),
                 );
               },
               icon: const Icon(Icons.list_alt),

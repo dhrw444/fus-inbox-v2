@@ -22,6 +22,29 @@ BrowserIdentity _current = BrowserIdentity.fallback;
 /// 内核大版本。用来给新身份定基准。
 int? _kernelMajor;
 
+/// 内核报的**完整** UA。
+///
+/// 和 [_kernelMajor] 分开存：主版本只用来给随机身份定基准，而完整 UA
+/// 是「这个设备的真实身份」——「回到内核真值」这个操作要的就是它。
+/// 少了它，用户换过身份之后就没法撤销了。
+String? _kernelUa;
+
+/// 内核真值身份。启动时没探到就是 null。
+///
+/// 返回 null 而不是 [BrowserIdentity.fallback]：fallback 是**编的**，
+/// 把它当「真值」显示给用户等于告诉他「你的手机是 Pixel 8 Pro」，
+/// 而实际上可能是别的。不知道就说不知道。
+BrowserIdentity? get kernelIdentity {
+  final ua = _kernelUa;
+  if (ua == null) return null;
+  return BrowserIdentity(
+    userAgent: ua,
+    model: _parseModel(ua) ?? '未知机型',
+    chromeMajor: _parseMajor(ua) ?? 0,
+    androidVersion: _parseAndroid(ua) ?? '未知',
+  );
+}
+
 /// 安卓机型的候选池。
 ///
 /// 全部是**真实存在**的机型和对应的安卓版本。编一个不存在的机型
@@ -124,6 +147,8 @@ void bootstrapUserAgent(String kernelUa) {
 
   final major = _parseMajor(ua);
   if (major != null && major > 0) _kernelMajor = major;
+  // 完整 UA 也留着 —— 「回到内核真值」要用它。
+  _kernelUa = ua;
 
   _current = BrowserIdentity(
     userAgent: ua,

@@ -25,11 +25,17 @@ dependencies:
   # 用 `dart:io` 直接打接口拿不到数据。
   flutter_inappwebview: ^6.2.0-beta.3
 
+  # 存两样东西：上次用的 UA（重启读回，见 `core/user_agent.dart`）
+  # 和上次选的出口。**都不含凭据** —— 出口的 id 不含密码，
+  # 存的是清单里的那一条。
+  shared_preferences: ^2.5.6
+
   # 说明：**只留真正用到的**。
   #
-  # 旧项目那份 pubspec 里有 8 个依赖，其中 6 个（dynamic_color /
+  # 旧项目那份 pubspec 里有 8 个依赖，其中 5 个（dynamic_color /
   # material_ui / material_3_expressive / material_color_utilities /
-  # pub_semver / shared_preferences）在本项目里一次都没 import。
+  # pub_semver）在本项目里一次都没 import —— `shared_preferences`
+  # 是唯一留下的那个，因为身份持久化真的要用它。
   # 而「多一个依赖」不只是多一份体积 —— 它多一层版本约束、多一处
   # 「为什么会有这个包」的疑问。用到再加。
 

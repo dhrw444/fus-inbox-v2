@@ -642,6 +642,33 @@ void _testUserAgent() {
     bootstrapUserAgent('');
     _eq('空串不动', currentIdentity.userAgent, before);
   }
+
+  // ── 内核真值：换过身份之后还拿得回来 ──
+  //
+  // 这是「回到内核真值」那个按钮的依据。少了它，用户换完身份就
+  // 撤销不了 —— 而撤销是他发现「换坏了」时唯一能做的事。
+  {
+    const kernel =
+        'Mozilla/5.0 (Linux; Android 14; SM-S918B Build/UP1A.231005.007) '
+        'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.7390.122 '
+        'Mobile Safari/537.36';
+    bootstrapUserAgent(kernel);
+
+    final k = kernelIdentity;
+    _ok('探到内核就非 null', k != null);
+    _eq('内核真值就是内核那句', k!.userAgent, kernel);
+    _eq('机型解析出来', k.model, 'SM-S918B');
+    _eq('安卓版本解析出来', k.androidVersion, '14');
+
+    // 换掉之后，真值还在。
+    rotateIdentity(Random(11));
+    _ok('换身份后当前变了', currentIdentity.userAgent != kernel);
+    _eq('内核真值没被换掉', kernelIdentity!.userAgent, kernel);
+
+    // 撤销。
+    restoreUserAgent(kernelIdentity!.userAgent);
+    _eq('撤销后回到真值', currentUserAgent, kernel);
+  }
 }
 
 void _testProxy() {
