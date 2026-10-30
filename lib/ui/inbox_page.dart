@@ -38,9 +38,14 @@ import '../data/inbox_state.dart';
 import '../data/inbox_store.dart';
 import '../data/verify_round.dart';
 import '../data/visitor_session.dart';
-import '../core/store.dart';
 import '../main.dart'
-    show egress, readRoster, readVisitors, store, writeRoster, writeVisitors;
+    show
+        egress,
+        readRoster,
+        readVisitors,
+        writeProfile,
+        writeRoster,
+        writeVisitors;
 import '../platform/identity_script.dart';
 import '../platform/site_wipe.dart';
 import '../platform/web_view.dart';
@@ -90,6 +95,19 @@ class _InboxPageState() extends State<InboxPage> {
   String _scannerScript = '';
   bool _ready = false;
 
+  /// 访客（出口 + 身份）已经定好并应用上了。
+  ///
+  /// **和 [_ready] 分开，两个都成立才建 WebView。** `_ready` 只说「脚本
+  /// 读到了」，它和访客决策是两条独立的异步；只等 `_ready` 的话，脚本先
+  /// 回来就会**用盘上那个旧身份把页面打出去**，然后才切到新的 —— 站点
+  /// 看到的正是一次「设备指纹变了」，比不换更可疑。这个位置本来就是要
+  /// 防住这件事（见 `initState` 里那段顺序说明），只是之前没有东西把
+  /// 它落实。
+  ///
+  /// 决策失败也要置起来（见 [_openWithVisitor] 的 `finally`）：那属于
+  /// 「沿用当前身份直开」，不能把页面卡死在一个永远不成立的条件上。
+  bool _visitorReady = false;
+
   /// WebView 控制器。视图建好之前是 null。
   InAppWebViewController? _controller;
 
@@ -119,7 +137,6 @@ class _InboxPageState() extends State<InboxPage> {
       applyIdentity: applyIdentityProfile,
       mintIdentity: rotateIdentity,
       wipeSiteData: _wipeSite,
-      markWipePending: () => store.writeInt(kWipePendingKey, 1),
     );
     _store.onChanged = _onStoreChanged;
     unawaited(_loadScript());
@@ -130,18 +147,6 @@ class _InboxPageState() extends State<InboxPage> {
     // 顺序反了就是「先用旧身份打了站点一次，再换成新的」—— 那一次在
     // 对方眼里是设备指纹变了，比不换更可疑。
     unawaited(_openWithVisitor());
-  }
-
-  /// 有没有「换了身份但没清密钥」的待办。
-  ///
-  /// 出口页没有 WebView，删不了站点的 IndexedDB。它换完身份会打个标记，
-  /// 这里看到标记就说明**当前盘上那对密钥是上一个身份的** —— 必须先
-  /// 清掉再正常用，否则站点看到「新 UA + 旧密钥」。
-  Future<bool> _takeWipePending() async {
-    final v = await store.readInt(kWipePendingKey);
-    if (v == null || v == 0) return false;
-    await store.remove(kWipePendingKey);
-    return true;
   }
 
   /// 从收件页地址里取 11 位号码。取不到就返回空串（记忆功能跳过）。
@@ -166,7 +171,9 @@ class _InboxPageState() extends State<InboxPage> {
   Future<bool?> _wipeSite() async {
     final c = _controller;
     // 页面还没建（`initState` 阶段、或 WebView 已销毁）→ 清不了。
-    // 调用方据此打 `kWipePendingKey` 让 `_onPageFinished` 补做。
+    // 调用方据此把「待清」记在自己身上（`wipeDeferred` → `_wipeOnLoad`），
+    // 等 `_onPageFinished` 补做。**null 和 `false` 是两回事**：null 是
+    // 「还没跑」，false 是「跑了但没清掉」—— 上面那段说清了为什么。
     if (c == null) return null;
     var ok = false;
     try {
@@ -180,33 +187,45 @@ class _InboxPageState() extends State<InboxPage> {
   }
 
   /// 决定访客 → 应用 → 加载页面。
+  ///
+  /// 只有这一条路会建 WebView（见 [_visitorReady]）。
   Future<void> _openWithVisitor() async {
-    // 有「待清」标记 → 这一轮的第一件事是清密钥，不是加载页面。
-    _wipeOnLoad = await _takeWipePending();
-    if (_digits.isEmpty) {
-      // 地址里没号码（不该发生）→ 不碰身份，直接开。
-      await _applyProxy();
-      return;
-    }
-
-    VisitPlan plan;
     try {
-      plan = await _session.open(_digits);
-    } catch (e) {
-      // 访客决策失败不该让页面打不开 —— 那会把「换个身份」这种可选
-      // 优化变成硬故障。退回当前出口直开。
-      _store.note('访客切换失败（$e），沿用当前出口。');
-      await _applyProxy();
-      return;
-    }
+      if (_digits.isEmpty) {
+        // 地址里没号码（不该发生）→ 不碰身份，直接开。
+        await _applyProxy();
+        return;
+      }
 
-    if (!mounted) return;
-    // 把决定说出来。用户需要知道「这一页是哪个 IP 在看的」，
-    // 否则他会以为一直是同一个出口。
-    _store.note(plan.reason);
-    // 出口变了才重新指桥 —— 没变时重设一次无害，但会打断正在进行的
-    // 请求，所以只在真的变了才设。
-    await _applyProxy();
+      VisitPlan plan;
+      try {
+        // `open` 里已经把「有没有人看过这个号 → 切回当时的 IP + 身份」
+        // 判完并应用上了，这里只是把结论读出来报给用户。
+        plan = await _session.open(_digits);
+      } catch (e) {
+        // 访客决策失败不该让页面打不开 —— 那会把「换个身份」这种可选
+        // 优化变成硬故障。退回当前出口直开。
+        _store.note('访客切换失败（$e），沿用当前出口。');
+        await _applyProxy();
+        return;
+      }
+
+      if (!mounted) return;
+      // 把决定说出来。用户需要知道「这一页是哪个 IP 在看的」，
+      // 否则他会以为一直是同一个出口。
+      _store.note(plan.reason);
+      // 逻辑同上：`open` 可能切回了一个旧访客，身份变了就要落盘。
+      unawaited(writeProfile());
+      // 这一轮没清成站点密钥 → 页面加载完（`_onPageFinished`）补清。
+      if (plan.wipeDeferred) _wipeOnLoad = true;
+      // 出口变了才重新指桥 —— 没变时重设一次无害，但会打断正在进行的
+      // 请求，所以只在真的变了才设。
+      await _applyProxy();
+    } finally {
+      // **一定要放行。** 这一步漏掉的话 WebView 永远不建，页面永远空白，
+      // 而且没有任何报错 —— 决策里任何一个没接住的异常都会走到这里。
+      if (mounted) setState(() => _visitorReady = true);
+    }
   }
 
   /// 应用当前出口到 WebView。
@@ -254,6 +273,9 @@ class _InboxPageState() extends State<InboxPage> {
 
   /// 这次加载完要先清密钥。清完重载一次。
   bool _wipeOnLoad = false;
+
+  /// 正在重置访客。按钮据此禁用，避免连点两次同时换两轮。
+  bool _resetting = false;
 
   /// 上一轮见过的 hold 标识。避免同一份拒绝反复触发轮换。
   String? _lastHoldKey;
@@ -309,6 +331,7 @@ class _InboxPageState() extends State<InboxPage> {
     }
     unawaited(writeRoster());
     unawaited(writeVisitors());
+    unawaited(writeProfile());
 
     if (!mounted) return;
     if (plan == null) {
@@ -322,6 +345,40 @@ class _InboxPageState() extends State<InboxPage> {
     // 换了访客 = 换了个人看这个号，页面必须重开。
     // 不重开的话站点已经按旧身份记了这次访问，再重扫也拿不到东西。
     if (mounted) await _reload();
+  }
+
+  /// 用户点了「重置身份并切换 IP」。
+  ///
+  /// 走的是 [VisitorSession.reset] —— 和「被站点拒绝」**同一条**换人路径，
+  /// 不另造一套。区别只在于这次没有站点拒绝，是用户要换。
+  ///
+  /// 换完必须重开页面：站点已经把这次访问记在当前身份头上了，不重开
+  /// 的话新身份根本没被用上。
+  Future<void> _resetVisitor() async {
+    if (_digits.isEmpty) {
+      // 地址里没有号码 → 没有访客这一层可换（记忆也索引不了）。
+      // 说出来，别让按钮点了没反应。
+      _store.note('这个地址里没有号码，换不了访客。');
+      return;
+    }
+    setState(() => _resetting = true);
+    try {
+      final plan = await _session.reset(_digits);
+      unawaited(writeRoster());
+      unawaited(writeVisitors());
+      unawaited(writeProfile());
+      if (!mounted) return;
+      _store.note(plan.reason);
+      // 这一轮没清成密钥 → 等页面加载完补清（见 `_onPageFinished`）。
+      if (plan.wipeDeferred) _wipeOnLoad = true;
+      await _applyProxy();
+      // 换了访客 = 换了个人看这个号，页面必须重开。
+      if (mounted) await _reload();
+    } catch (e) {
+      if (mounted) _store.note('重置失败（$e），没换成。');
+    } finally {
+      if (mounted) setState(() => _resetting = false);
+    }
   }
 
   Future<void> _loadScript() async {
@@ -530,6 +587,11 @@ class _InboxPageState() extends State<InboxPage> {
               title: Text(widget.title),
               actions: [
                 IconButton(
+                  tooltip: '重置身份并切换 IP',
+                  onPressed: _resetting ? null : _resetVisitor,
+                  icon: const Icon(Icons.swap_horiz),
+                ),
+                IconButton(
                   tooltip: '重新加载',
                   onPressed: _reload,
                   icon: const Icon(Icons.refresh),
@@ -558,10 +620,13 @@ class _InboxPageState() extends State<InboxPage> {
               child: ColoredBox(
                 // 引擎看不见 Flutter 的背景，给个深色免得加载瞬间闪白。
                 color: const Color(0xFF10131A),
-                child: _ready
+                child: _ready && _visitorReady
                     ? buildWebView(
                         key: _key,
                         userAgent: currentUserAgent,
+                        // 首屏地址。**必须给** —— 少了它页面永远不加载，
+                        // 详见 `buildWebView` 的注释。
+                        initialUrl: widget.inboxUrl,
                         scripts: [
                           // **环境伪装必须排第一。**
                           //
@@ -868,10 +933,10 @@ class _InboxPageState() extends State<InboxPage> {
     if (!mounted) return;
     if (!_ready) setState(() => _ready = true);
 
-    // 出口页换过身份但没清密钥 → 现在是唯一能清的时机。
+    // 这一轮换过身份但没清成密钥（页面当时还没建）→ 现在补清。
     //
-    // **必须在这里清，不能在 `initState`**：那时 WebView 还没建，
-    // 脚本无处可跑。而且必须等页面真的在站点 origin 上 —— 只有那时
+    // **必须在这里清，不能在 `initState`**：那时 WebView 还没建，脚本
+    // 无处可跑。而且必须等页面真的在站点 origin 上 —— 只有那时
     // `indexedDB.open('fus-reader-v1')` 才指向站点的库。
     //
     // 清完立刻重载：这一页是用旧密钥加载的，站点可能已经认了旧身份。
@@ -879,15 +944,16 @@ class _InboxPageState() extends State<InboxPage> {
     if (_wipeOnLoad) {
       _wipeOnLoad = false;
       unawaited(() async {
-        // controller 一定在（`_onPageFinished` 已经跑到），null 只可能是
-        // 异常路径。**清不掉就把标记写回去** —— 否则这次「换了身份没清
-        // 密钥」就这么过去了，用户下次打开还是同一个身份，而且没人知道。
+        // 这次页面一定建好了（`_onPageFinished` 已经跑到），所以
+        // `_wipeSite` 不该再返回 null。**它要是还返回 null，说明这个
+        // 假设错了** —— 那就别假装清过，也别重载（重载只会拿着同一对
+        // 旧密钥再来一次），直接把这一页标成失败说出来。
         if (await _wipeSite() == null) {
-          await store.writeInt(kWipePendingKey, 1);
+          _store.fail('换身份后没清成站点密钥（页面状态异常），请重新打开收件页。');
           return;
         }
-        // 清干净了才重载：这一页是用旧密钥加载的，站点可能已经认了旧
-        // 身份，不重载这次访问算在旧身份头上，白换。
+        // 清干净了才重载 —— 这一页是用旧密钥加载的，站点可能已经认了
+        // 旧身份，不重载这次访问算在旧身份头上，白换。
         if (mounted) await _reload();
       }());
       return;

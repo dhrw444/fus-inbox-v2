@@ -115,6 +115,30 @@ Future<void> writeVisitors() =>
 Future<void> writeRoster() =>
     store.write(kRosterKey, jsonEncode(_roster.toMap()));
 
+/// 写「当前身份画像」。
+///
+/// **和名册是两件事。** 名册是「用过哪些身份」，这个是「现在这个是谁」——
+/// 启动时要靠它把上一次的身份原样恢复出来（`main` 里读它）。只写名册不写
+/// 它，冷启动会退回本机真值指纹，而站点那边 IndexedDB 里存的还是上次那个
+/// 身份的密钥 ——「密钥是旧人的、指纹是本机的」正是最容易被抓的组合。
+///
+/// **没有画像时要把两个键删掉，不能什么都不做。** 「没有画像」只有一种
+/// 情形：已经回到内核真值了（[resetIdentity]）。这时盘上那份旧画像必须
+/// 消失 —— 留着它，冷启动又会照着一份早就作废的画像把假身份装回去，
+/// 而且完全没有迹象。`return` 在这里是错的，是**静默留毒**。
+///
+/// 调用时机：任何改变了当前身份的路径（收件箱换访客、被拒后重置）。
+Future<void> writeProfile() async {
+  final p = currentProfile;
+  if (p == null) {
+    await store.remove(kProfileKey);
+    await store.remove(kUserAgentKey);
+    return;
+  }
+  await store.write(kProfileKey, jsonEncode(p.toJson()));
+  await store.write(kUserAgentKey, p.userAgent);
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 

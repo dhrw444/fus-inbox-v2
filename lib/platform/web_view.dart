@@ -114,55 +114,72 @@ class const WebViewEvents({
 /// [scripts] 是页面加载**之前**要注入的脚本（垫片 + 抓取层）。
 /// 必须走 `initialUserScripts` 而不是加载后再 `evaluateJavascript` ——
 /// 站点自己的脚本一进来就会读 `navigator`，晚一步那一屏已经被判定过了。
+/// [initialUrl] 是首屏地址，**必须给**。
+///
+/// 不给的话这个 `InAppWebView` 建出来是空白的：`initialUrlRequest` 为
+/// `null` 时内核只停在 `about:blank`，而本仓唯一一处 `loadUrl` 在
+/// `_reload()` 里、只在「被拒之后 / 用户按刷新」才走到 —— 于是页面
+/// 永远不加载，`onLoadStop` 也永远不来。之前缺这个参数，症状就是
+/// 「收件箱打开一片空白，什么都不发生」。
+///
+/// 空串是配置错误（调用方地址没解析出来），直接抛 —— 静默建一个白屏
+/// 视图比报错更难查。
 Widget buildWebView({
   required Key key,
   required String userAgent,
   required List<UserScript> scripts,
   required WebViewEvents events,
+  required String initialUrl,
   void Function(InAppWebViewController controller)? onCreated,
-}) => InAppWebView(
-  key: key,
-  initialSettings: webViewSettings(userAgent),
-  initialUserScripts: UnmodifiableListView(scripts),
-  onWebViewCreated: (controller) {
-    // 通道要在页面脚本跑之前注册好，否则第一帧消息会丢。
-    controller.addJavaScriptHandler(
-      handlerName: messageChannel,
-      // 参数类型必须显式写：`JavaScriptHandlerCallback` 的签名是
-      // `dynamic Function(List<dynamic>)`。省略会让 `args.isNotEmpty`
-      // 变成「条件不是 bool」（`non_bool_condition`），CI 会挂。
-      callback: (List<dynamic> args) {
-        if (args.isEmpty) return null;
-        final first = args.first;
-        // 站点 JS 发的是字符串。不是字符串就丢掉 —— 与其把任意 dynamic
-        // 拼成字符串塞给状态层（那层会直接解析 JSON），不如在这里挡住。
-        if (first is String) events.onMessage(messageChannel, first);
-        return null;
-      },
-    );
-    onCreated?.call(controller);
-  },
-  shouldOverrideUrlLoading: (controller, action) async {
-    final url = action.request.url?.toString() ?? '';
-    if (url.isEmpty) return NavigationActionPolicy.ALLOW;
-    return events.allowNavigation(url)
-        ? NavigationActionPolicy.ALLOW
-        : NavigationActionPolicy.CANCEL;
-  },
-  onLoadStart: (controller, url) {
-    if (url != null) events.onStarted(url.toString());
-  },
-  onLoadStop: (controller, url) {
-    if (url != null) events.onFinished(url.toString());
-  },
-  onReceivedError: (controller, request, error) {
-    // 只报**主框架**的错。子资源（图床、埋点）失败是常态，
-    // 拿它当页面失败会让每挂一张图就走一轮重试。
-    if (request.isForMainFrame ?? true) {
-      events.onError(error);
-    }
-  },
-);
+}) {
+  if (initialUrl.isEmpty) {
+    throw ArgumentError.value(initialUrl, 'initialUrl', '首屏地址不能为空');
+  }
+  return InAppWebView(
+    key: key,
+    initialUrlRequest: URLRequest(url: WebUri(initialUrl)),
+    initialSettings: webViewSettings(userAgent),
+    initialUserScripts: UnmodifiableListView(scripts),
+    onWebViewCreated: (controller) {
+      // 通道要在页面脚本跑之前注册好，否则第一帧消息会丢。
+      controller.addJavaScriptHandler(
+        handlerName: messageChannel,
+        // 参数类型必须显式写：`JavaScriptHandlerCallback` 的签名是
+        // `dynamic Function(List<dynamic>)`。省略会让 `args.isNotEmpty`
+        // 变成「条件不是 bool」（`non_bool_condition`），CI 会挂。
+        callback: (List<dynamic> args) {
+          if (args.isEmpty) return null;
+          final first = args.first;
+          // 站点 JS 发的是字符串。不是字符串就丢掉 —— 与其把任意 dynamic
+          // 拼成字符串塞给状态层（那层会直接解析 JSON），不如在这里挡住。
+          if (first is String) events.onMessage(messageChannel, first);
+          return null;
+        },
+      );
+      onCreated?.call(controller);
+    },
+    shouldOverrideUrlLoading: (controller, action) async {
+      final url = action.request.url?.toString() ?? '';
+      if (url.isEmpty) return NavigationActionPolicy.ALLOW;
+      return events.allowNavigation(url)
+          ? NavigationActionPolicy.ALLOW
+          : NavigationActionPolicy.CANCEL;
+    },
+    onLoadStart: (controller, url) {
+      if (url != null) events.onStarted(url.toString());
+    },
+    onLoadStop: (controller, url) {
+      if (url != null) events.onFinished(url.toString());
+    },
+    onReceivedError: (controller, request, error) {
+      // 只报**主框架**的错。子资源（图床、埋点）失败是常态，
+      // 拿它当页面失败会让每挂一张图就走一轮重试。
+      if (request.isForMainFrame ?? true) {
+        events.onError(error);
+      }
+    },
+  );
+}
 
 /// JS ↔ Dart 的通道名。
 ///

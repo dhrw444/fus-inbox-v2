@@ -53,14 +53,6 @@ const kUserAgentKey = 'ua_v1';
 /// 只为了兼容已升级的用户（读到老键就当成「只有 UA」）。
 const kProfileKey = 'profile_v1';
 
-/// 待清标记。换了身份但还没清站点数据时置 1。
-///
-/// 为什么需要这个：出口页没有 WebView，跑不了删 IndexedDB 的脚本。
-/// 那里点「换一个身份」只能清原生层（cookie/缓存），密钥还在盘上。
-/// 收件箱下次打开页面时看到这个标记，会先把密钥清掉再加载 ——
-/// 不清的话站点看到的是「新 UA + 旧密钥」，身份对不上。
-const kWipePendingKey = 'wipe_pending_v1';
-
 /// 上次选的出口 id（`scheme://host:port`，不含密码）。
 const kEgressIdKey = 'egress_v1';
 

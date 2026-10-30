@@ -17,17 +17,12 @@
 ///      说明原因，抓取那边会直接失败。
 library;
 
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 
-import '../core/store.dart';
-import '../core/user_agent.dart';
 import '../data/egress.dart';
 import '../data/proxy_config.dart';
 import '../data/proxy_probe.dart';
-import '../main.dart' show store;
 
 /// 出口设置页。
 class const EgressPage({required this.egress, super.key})
@@ -134,7 +129,6 @@ class _EgressPageState() extends State<EgressPage> {
         padding: const EdgeInsets.only(bottom: 24),
         children: [
           _statusCard(theme, e),
-          _identityCard(theme),
           _manualCard(theme),
           _sectionHeader(theme, '内置清单'),
           ..._manifestRows(theme, e),
@@ -225,111 +219,6 @@ class _EgressPageState() extends State<EgressPage> {
         ),
       ),
     );
-  }
-
-  // ── 身份 ────────────────────────────────────────────────
-
-  /// 当前身份 + 换一个。
-  ///
-  /// **换身份和换出口是一件事的两面**：站点同时看 IP 和浏览器身份。
-  /// 只换 IP 而身份不变，等于「同一个人换了个门进来」；只换身份而 IP
-  /// 不变，等于「同一个人换了个帽子」。两个都换才是另一个访客。
-  ///
-  /// 所以这里**故意把两者放在同一页**，而不是各开一个设置项。
-  Widget _identityCard(ThemeData theme) {
-    final scheme = theme.colorScheme;
-    final id = currentIdentity;
-    return Card(
-      margin: const EdgeInsets.fromLTRB(12, 4, 12, 4),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('当前身份', style: theme.textTheme.titleSmall),
-            const SizedBox(height: 8),
-            Text(
-              '${id.model} · Android ${id.androidVersion} · Chrome ${id.chromeMajor}',
-              style: theme.textTheme.bodyMedium,
-            ),
-            const SizedBox(height: 4),
-            // UA 全文给出来，但小字、可选中。调试时这是唯一能确认
-            // 「内核真的用上了这个 UA」的地方。
-            SelectableText(
-              id.userAgent,
-              style: theme.textTheme.bodySmall?.copyWith(
-                fontFamily: 'monospace',
-                color: scheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                FilledButton.tonalIcon(
-                  onPressed: _rotate,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('换一个身份'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: _resetIdentity,
-                  icon: const Icon(Icons.restore),
-                  label: const Text('回到内核真值'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '换身份要重开收件页才生效，并且会清掉站点在这台设备上存的'
-              '验证状态。',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: scheme.onSurfaceVariant,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// 换一个随机身份并写盘。
-  ///
-  /// **先写盘再改内存**？反过来才对 —— 顺序无所谓，但必须两边都做：
-  /// 只改内存不写盘 = 重启变回旧的（用户以为换过了）；
-  /// 只写盘不改内存 = 这一轮还用旧的（用户以为没换）。
-  void _rotate() {
-    final next = rotateIdentity();
-    // 存**整份画像**，不只 UA。只存 UA 的话重启后屏幕和时区会退回
-    // 本机真实值，而 UA 还是那台假机器 —— 一个自相矛盾的半身份，
-    // 比不换更容易被抓。
-    store.write(kProfileKey, jsonEncode(next.toJson()));
-    // 这里没有 WebView，删不了站点的 IndexedDB 密钥。
-    // 打个标记，收件箱下次打开页面时先清 —— 不清的话站点看到的是
-    // 「新 UA + 旧密钥」，比不换更容易被抓。
-    store.writeInt(kWipePendingKey, 1);
-    setState(() {});
-  }
-
-  /// 回到内核真值。
-  ///
-  /// 这是「撤销」。内核真值是这个设备的真实身份 —— 站点看它最正常。
-  /// 同时清掉存盘，否则下次启动又读回那个随机的。
-  void _resetIdentity() {
-    final kernel = kernelIdentity;
-    if (kernel == null) {
-      // 启动时没探到（`getDefaultUserAgent` 抛了）。这时没有真值可回，
-      // 说出来，别假装成功。
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('启动时没拿到内核 UA，回不去')));
-      return;
-    }
-    // 两个键都删。只删新键的话，老键还在盘上，下次启动又读回来 ——
-    // 用户以为「回到真身」了，实际还是那个假的。
-    store.remove(kProfileKey);
-    store.remove(kUserAgentKey);
-    resetIdentity();
-    setState(() {});
   }
 
   // ── 手填 ────────────────────────────────────────────────

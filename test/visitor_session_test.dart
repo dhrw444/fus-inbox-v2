@@ -1,11 +1,11 @@
 import 'dart:math';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:fus_inbox/data/identity_profile.dart';
-import 'package:fus_inbox/data/identity_roster.dart';
-import 'package:fus_inbox/data/proxy_config.dart';
-import 'package:fus_inbox/data/visitor.dart';
-import 'package:fus_inbox/data/visitor_session.dart';
+import 'package:fus_inbox_v2/data/identity_profile.dart';
+import 'package:fus_inbox_v2/data/identity_roster.dart';
+import 'package:fus_inbox_v2/data/proxy_config.dart';
+import 'package:fus_inbox_v2/data/visitor.dart';
+import 'package:fus_inbox_v2/data/visitor_session.dart';
 
 /// 一个假的出口池 + 切出口记录。
 ///
@@ -316,10 +316,7 @@ void main() {
 
   group('清站点数据的结果要如实说出来', () {
     /// 造一个 wipe 结果固定的会话。
-    VisitorSession make(
-      bool? Function() wipe, {
-      Future<void> Function()? mark,
-    }) => VisitorSession(
+    VisitorSession make(bool? Function() wipe) => VisitorSession(
       book: book,
       roster: roster,
       currentEgress: () => fake.current,
@@ -331,27 +328,28 @@ void main() {
         wipes++;
         return wipe();
       },
-      markWipePending: mark,
       clock: () => now,
       random: Random(11),
     );
 
-    test('清不了（页面还没建）→ 打待清标记，且不说成「没清干净」', () async {
-      var marked = 0;
-      final s = make(() => null, mark: () async => marked++);
+    test('清不了（页面还没建）→ 顶回调用方，且不说成「没清干净」', () async {
+      final s = make(() => null);
       final plan = await s.open('4044225634');
       // 关键：null 不是失败。说成「没清干净」会把用户带到错误的排查方向
       // ——真相是这次根本没清，页面加载完会补做。
       expect(plan.reason, isNot(contains('没清干净')));
       expect(plan.reason, contains('加载完会立刻清'));
-      // 而且标记必须打上，否则这次换身份永远漏掉清库那一步。
-      expect(marked, 1, reason: '清不了就要留待办，不然密钥永远不清');
+      // 而且要**顶回调用方**，否则这次换身份永远漏掉清库那一步。
+      // 之前这里存盘上的标记，现在靠返回值 —— 跨页标记会在应用被杀掉
+      // 之后变成一条没人消费的陈旧状态，下次打开莫名其妙清一次库。
+      expect(plan.wipeDeferred, isTrue, reason: '清不了就要顶回去，不然密钥永远不清');
     });
 
-    test('清不了但没人接收标记 → 不崩，只是没留待办', () async {
-      final s = make(() => null); // markWipePending 为 null
+    test('清成功 → wipeDeferred 为假，调用方不必补做', () async {
+      final s = make(() => true);
       final plan = await s.open('4044225634');
-      expect(plan.reason, contains('加载完会立刻清'));
+      expect(plan.wipeDeferred, isFalse);
+      expect(plan.reason, isNot(contains('加载完会立刻清')));
     });
 
     test('真清失败 → 说「没清干净」，不说成「加载完会清」', () async {
@@ -366,6 +364,91 @@ void main() {
       final plan = await s.open('4044225634');
       expect(plan.reason, isNot(contains('没清干净')));
       expect(plan.reason, isNot(contains('加载完会立刻清')));
+    });
+  });
+
+  group('手动重置访客', () {
+    test('重置后换到另一个访客 —— 不能原样返回当前那一对', () async {
+      // 先正常打开一次，手里有「当前访客」。
+      await session.open('4044225634');
+      session.onSucceeded('4044225634');
+      final before = session.current!;
+
+      final plan = await session.reset('4044225634');
+
+      // 这两条是这次动作存在的全部意义。少了任何一条，用户点了按钮、
+      // 界面也报了文案，实际还是同一个人在看同一个号。
+      expect(
+        plan.identityId,
+        isNot(before.identityId),
+        reason: '重置必须换身份，否则站点看到的还是同一个人',
+      );
+      expect(
+        plan.egress?.id,
+        isNot(before.egressId),
+        reason: '重置必须换出口，否则站点看到的还是同一个 IP',
+      );
+      expect(plan.reused, isFalse);
+    });
+
+    test('重置后紧接着 open 不会又切回旧的那一对', () async {
+      await session.open('4044225634');
+      session.onSucceeded('4044225634');
+      final before = session.current!;
+
+      await session.reset('4044225634');
+      session.onSucceeded('4044225634');
+
+      // 关键点：重置把旧组合记进了拒绝账，所以接下来的 `open` 走不到
+      // 「当前还能用就用它」那条捷径。不记账的话它照样返回 `before`，
+      // 用户点按钮那次换人就白换了。
+      final again = await session.open('4044225634');
+      expect(again.identityId, isNot(before.identityId));
+      expect(again.egress?.id, isNot(before.egressId));
+    });
+
+    test('重置清掉这个号的记忆 —— 下次打开不许再照旧切回去', () async {
+      await session.open('4044225634');
+      session.onSucceeded('4044225634');
+      final before = session.current!;
+      expect(
+        book.visitorFor('4044225634', now),
+        before,
+        reason: '前提：这一轮确实记下了记忆',
+      );
+
+      await session.reset('4044225634');
+
+      // 记忆清掉了，下次打开只能看「当前访客」那一路 —— 而它已经被
+      // 重置换成了新的。留着记忆的话，重置完再打开又回到刚才那一对。
+      expect(book.visitorFor('4044225634', now), isNull);
+    });
+
+    test('重置作废旧身份在别的号码上的记忆', () async {
+      // 先让同一个访客看两个号，两个号都记下它。
+      await session.open('4044225634');
+      session.onSucceeded('4044225634');
+      final old = session.current!;
+      await session.open('4155550100');
+      session.onSucceeded('4155550100');
+      expect(
+        book.visitorFor('4155550100', now),
+        old,
+        reason: '前提：第二个号也记的是同一个访客',
+      );
+
+      await session.reset('4044225634');
+
+      // 这条是 `reset` 里那步 `block` 存在的**全部理由**：被换掉的身份
+      // 已经判定不可信，它在别的号码上的记忆也必须一起失效（`block`
+      // 内部会清，见 `visitor.dart:205`）。只清当前这个号的记忆是不够
+      // 的 —— 用户重置完点开另一个号，又会照着一份不可信的记忆切回刚
+      // 被换掉的那个人。
+      expect(
+        book.visitorFor('4155550100', now),
+        isNull,
+        reason: '旧身份在别的号上的记忆也要作废',
+      );
     });
   });
 

@@ -36,6 +36,7 @@ class const VisitPlan({
   required this.identityUa,
   required this.reused,
   required this.reason,
+  required this.wipeDeferred,
 }) {
   /// 要用的出口。null = 直连（没有代理可用）。
   final ProxyConfig? egress;
@@ -51,6 +52,13 @@ class const VisitPlan({
 
   /// 一句人话，给状态栏用。
   final String reason;
+
+  /// **这次的清库没做成**（页面还没建），要等页面加载完补一次。
+  ///
+  /// 由调用方落实 —— 只有它知道页面什么时候真的在了。收件箱拿到真就
+  /// 在 `_onPageFinished` 里清一次再重载。**不能省**：这一轮要是换个
+  /// 身份又不清密钥，站点看到的是「新 UA + 旧密钥」，比不换更可疑。
+  final bool wipeDeferred;
 
   Visitor get visitor =>
       Visitor(egressId: egress?.id ?? '', identityId: identityId);
@@ -94,14 +102,10 @@ class VisitorSession({
   /// 返回是否清干净。清不干净要说出来 —— 那意味着这次「换身份」
   /// 只是换了张脸，用户该知道。
   ///
-  /// **返回 null 表示「清不了」，不是「清失败」。** 首次打开时 WebView
-  /// 还没建，脚本无处可跑 —— 这时不该报「没清干净」，该说「这轮先
-  /// 加载页面，加载完立刻清」。调用方据此打待清标记。
+  /// **返回 null 表示「没清成」**（页面还没建，脚本无处可跑）。和
+  /// `false` 分开只因为原因不同：`false` 是脚本跑了但没清掉，`null`
+  /// 是根本没跑。对用户是同一件事 —— 这轮没清掉，别当成干净了。
   required this.wipeSiteData,
-
-  /// 打「待清」标记。清不了时（页面还没建）用它让调用方在页面加载
-  /// 之后补做 —— 不打标记的话这次换身份会静默漏掉清库那一步。
-  this.markWipePending,
 
   /// 取当前时间。注入是为了能测过期。
   this.clock = DateTime.now,
@@ -117,7 +121,6 @@ class VisitorSession({
   final void Function(IdentityProfile p) applyIdentity;
   final IdentityProfile Function() mintIdentity;
   final Future<bool?> Function() wipeSiteData;
-  final Future<void> Function()? markWipePending;
   final DateTime Function() clock;
   final Random? random;
 
@@ -161,13 +164,15 @@ class VisitorSession({
             identityUa: prof.userAgent,
             reused: true,
             reason: '这个号码没有记录，沿用当前出口 + 身份',
+            // 沿用当前访客 = 没换身份，密钥本来就是这个人的，不用清。
+            wipeDeferred: false,
           );
         }
       }
     }
 
     // ③ 换。两样一起。
-    return _rotateBoth(digits, reason: '当前出口或身份不可用，两样都换');
+    return _rotateBoth(reason: '当前出口或身份不可用，两样都换');
   }
 
   /// 站点拒绝了。**重置身份 + 切换 IP**，两样都做。
@@ -197,7 +202,31 @@ class VisitorSession({
     // 站点说这个号不行了 → 记忆作废，别下次还照着它切回去。
     book.forgetNumber(digits);
 
-    return _rotateBoth(digits, reason: '被站点拒绝，重置身份并切换 IP');
+    return _rotateBoth(reason: '被站点拒绝，重置身份并切换 IP');
+  }
+
+  /// 用户手动点了「重置身份 + 切换 IP」。
+  ///
+  /// 和 [onRejected] 走**同一条**换人路径（换身份 → 换出口 → 清密钥），
+  /// 唯一的区别是**没有站点拒绝这回事** —— 当前这一对其实还能用，只是
+  /// 用户要换。
+  ///
+  /// [VisitorBook.block] 那一步不是为了让 [open] 绕开「当前还能用就用
+  /// 它」那条路（`_rotateBoth` 本来就会把 `_current` 换掉，已经换的
+  /// 组合不会被再选一次）。它真正的作用是 `block` 内部的记忆清理
+  /// （`visitor.dart:205`）：**被换掉的那个身份，它在其它号码上的记忆
+  /// 也一并作废**。留着的话，用户重置完再点开另一个号，又会照着一份
+  /// 已经被判定不可信的记忆，切回刚被换掉的那个身份。
+  ///
+  /// 号码记忆也要清：用户要的是「换个人看这个号」，留着记忆会让下一次
+  /// 打开又切回刚才那一对。
+  Future<VisitPlan> reset(String digits) async {
+    final cur = _current;
+    if (cur != null) {
+      book.block(cur.egressId, cur.identityId, clock(), temporary: false);
+    }
+    book.forgetNumber(digits);
+    return _rotateBoth(reason: '已重置：身份和 IP 都换了');
   }
 
   /// 这次拿到了消息 → 记下来，下次打开同一个号直接用这一对。
@@ -235,9 +264,11 @@ class VisitorSession({
     //
     // 清完之后这个身份下次要重新过一遍 Turnstile，代价是慢一点；
     // 不清的代价是身份对不上。
-    // 和 [_rotateBoth] 一样：清不了就打标记让页面加载后补做。
-    // 这里不把结果说进 reason —— 切回旧身份本来就慢一点，用户已经知道。
-    if (await wipeSiteData() == null) await markWipePending?.call();
+    //
+    // 清不了就把「待清」顶回调用方（`wipeDeferred`），让它在页面加载完
+    // 之后补 —— 这里不把结果说进 reason，切回旧身份本来就慢一点，
+    // 用户已经知道。
+    final cleared = await wipeSiteData();
 
     applyIdentity(prof);
 
@@ -251,11 +282,12 @@ class VisitorSession({
       identityUa: prof.userAgent,
       reused: true,
       reason: '这个号码之前就是用这个出口 + 身份看的，已切回',
+      wipeDeferred: cleared == null,
     );
   }
 
   /// 身份和出口一起换。
-  Future<VisitPlan> _rotateBoth(String digits, {required String reason}) async {
+  Future<VisitPlan> _rotateBoth({required String reason}) async {
     final now = clock();
 
     // 身份：造一个新的，**整份**记进名册（下次要能还原屏幕和时区）。
@@ -274,11 +306,10 @@ class VisitorSession({
     // 之后才跑。所以两种顺序对脚本都没影响，统一成一条只为两处不漂。
     //
     // `cleared` 可能是 null（页面还没建，清不了）—— 那不是失败，是
-    // 「这轮还没清」，调用方要打待清标记让页面加载后补做。
+    // 「这轮还没清」。**把这件事顶回调用方**（`wipeDeferred`），让它
+    // 在页面加载完之后补清。不写盘：那是调用方自己的事，盘子里的
+    // 标记一多，谁消费谁清理就得靠对账。
     final cleared = await wipeSiteData();
-    // 清不了（页面还没建）→ 打标记，让 `_onPageFinished` 补做。
-    // 这一步漏掉的话，「首开时换身份」就永远不会清库。
-    if (cleared == null) await markWipePending?.call();
 
     applyIdentity(prof);
     if (eg != null) await switchEgress(eg);
@@ -289,6 +320,7 @@ class VisitorSession({
       identityUa: prof.userAgent,
       reused: false,
       reason: _reasonOf(reason, eg: eg, cleared: cleared),
+      wipeDeferred: cleared == null,
     );
     _current = plan.visitor;
     return plan;
