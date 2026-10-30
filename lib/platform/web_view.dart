@@ -109,24 +109,6 @@ class const WebViewEvents({
   final bool Function(String url) allowNavigation;
 }
 
-/// 造一个 WebView。
-///
-/// [key] 决定「换 key 就重建平台视图」—— 必须真的挂到 `InAppWebView` 上，
-/// 旧代码收了这个参数却一路丢掉，导致本该重建的场景复用了旧视图。
-///
-/// [scripts] 是页面加载**之前**要注入的脚本（垫片 + 抓取层）。
-/// 必须走 `initialUserScripts` 而不是加载后再 `evaluateJavascript` ——
-/// 站点自己的脚本一进来就会读 `navigator`，晚一步那一屏已经被判定过了。
-/// [initialUrl] 是首屏地址，**必须给**。
-///
-/// 不给的话这个 `InAppWebView` 建出来是空白的：`initialUrlRequest` 为
-/// `null` 时内核只停在 `about:blank`，而本仓唯一一处 `loadUrl` 在
-/// `_reload()` 里、只在「被拒之后 / 用户按刷新」才走到 —— 于是页面
-/// 永远不加载，`onLoadStop` 也永远不来。之前缺这个参数，症状就是
-/// 「收件箱打开一片空白，什么都不发生」。
-///
-/// 空串是配置错误（调用方地址没解析出来），直接抛 —— 静默建一个白屏
-/// 视图比报错更难查。
 /// inbox WebView 的重建标识 —— **必须跟着身份走**。
 ///
 /// 原生视图只在 key 变（或 viewType 变）时重建：插件把 key 原样交给
@@ -157,7 +139,28 @@ bool controllerOwnsView({required Key? controllerKey, required Key viewKey}) {
   return controllerKey == viewKey;
 }
 
-/// [key] 必须是 [inboxViewKey] 的结果 —— 别传恒定 key，理由见那里。
+/// 造一个 WebView。
+///
+/// [key] 决定「换 key 就重建平台视图」—— 必须真的挂到 `InAppWebView` 上，
+/// 旧代码收了这个参数却一路丢掉，导致本该重建的场景复用了旧视图。
+/// **必须传 [inboxViewKey] 的结果**，别传恒定 key —— 理由见那里。
+///
+/// [scripts] 是页面加载**之前**要注入的脚本（垫片 + 抓取层）。
+/// 必须走 `initialUserScripts` 而不是加载后再 `evaluateJavascript` ——
+/// 站点自己的脚本一进来就会读 `navigator`，晚一步那一屏已经被判定过了。
+/// [initialUrl] 是首屏地址，**必须给**。
+///
+/// 不给的话这个 `InAppWebView` 建出来是空白的：`initialUrlRequest` 为
+/// `null` 时内核只停在 `about:blank`，而本仓唯一一处 `loadUrl` 在
+/// `_reload()` 里、只在「被拒之后 / 用户按刷新」才走到 —— 于是页面
+/// 永远不加载，`onLoadStop` 也永远不来。之前缺这个参数，症状就是
+/// 「收件箱打开一片空白，什么都不发生」。
+///
+/// [onCreated] 拿到刚建好的控制器。调用方要把它连同**当次 [key]** 一起
+/// 记下来，才能判断它有没有被后来的一次重建作废（[controllerOwnsView]）。
+///
+/// 空串是配置错误（调用方地址没解析出来），直接抛 —— 静默建一个白屏
+/// 视图比报错更难查。
 Widget buildWebView({
   required Key key,
   required String userAgent,

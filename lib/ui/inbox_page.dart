@@ -585,6 +585,10 @@ class _InboxPageState() extends State<InboxPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final st = _store.state;
+    // 这一帧的 key。**整帧共用同一个值** —— `onCreated` 是回调，跑起来时
+    // `build` 早结束了，那时再算一次可能已经拿到另一个身份，会把控制器
+    // 错记成新一代（于是 `_reload` 的守卫判错方向）。
+    final viewKey = _viewKey;
 
     return Scaffold(
       appBar: _round.visible
@@ -628,7 +632,7 @@ class _InboxPageState() extends State<InboxPage> {
                 color: const Color(0xFF10131A),
                 child: _ready && _visitorReady
                     ? buildWebView(
-                        key: _viewKey,
+                        key: viewKey,
                         userAgent: currentUserAgent,
                         // 首屏地址。**必须给** —— 少了它页面永远不加载，
                         // 详见 `buildWebView` 的注释。
@@ -662,7 +666,7 @@ class _InboxPageState() extends State<InboxPage> {
                         ),
                         onCreated: (c) {
                           _controller = c;
-                          _controllerKey = _viewKey;
+                          _controllerKey = viewKey;
                         },
                       )
                     : const SizedBox.shrink(),
