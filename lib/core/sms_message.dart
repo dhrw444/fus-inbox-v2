@@ -58,7 +58,24 @@ class const SmsMessage({
   /// 分散在多个调用点的话，两处迟早会漂移（一处「新帧优先」、一处
   /// 「旧帧优先」），而症状只是「偶尔某条正文缺一半」，极难查。
   ///
-  /// [isProtected] 例外：它是布尔，没有「空」这个状态，新帧说了算。
+  /// ## `isProtected` 用「真值粘住」而不是「新帧说了算」
+  ///
+  /// 两条产出路径对这个标记的判据不同，强度也不同：
+  ///   - 接口路径：站点 JSON 里明确给了 `protected: true` —— **强证据**
+  ///   - DOM 路径：靠「页面上有没有那句固定说明」反推 —— **弱证据**
+  ///     （说明文字还没渲染出来时会给出 false）
+  ///
+  /// 如果按「新帧说了算」，DOM 帧的 `false` 会把接口帧的 `true` 抹掉，
+  /// 而界面上这个标记只在正文为空时才读（`message_card.dart` 的 `_body`），
+  /// 正好是它最该起作用的场景 —— 用户看到「（没有正文）」而不是
+  /// 「这条消息站点不公开」。
+  ///
+  /// 反过来「false 覆盖 true」永远不会是我们想要的：站点说受保护就是受保护，
+  /// 只有站点自己改成 false 才该解封。所以规则是 `旧值 || 新值`。
+  ///
+  /// 副作用：一条消息一旦被标成受保护，本轮会话里不会再解封。这是可接受的 ——
+  /// 站点对受保护消息本来就会在解锁后重新推送完整正文，那时 `text` 非空，
+  /// 界面上走的是正文分支，标记是真是假都不影响显示。
   SmsMessage mergeWith(SmsMessage newer) => SmsMessage(
     id: id,
     text: newer.text.isNotEmpty ? newer.text : text,
@@ -66,7 +83,7 @@ class const SmsMessage({
     sender: newer.sender.isNotEmpty ? newer.sender : sender,
     time: newer.time.isNotEmpty ? newer.time : time,
     phone: newer.phone.isNotEmpty ? newer.phone : phone,
-    isProtected: newer.isProtected,
+    isProtected: isProtected || newer.isProtected,
   );
 
   @override

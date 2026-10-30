@@ -16,6 +16,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'number_entry.dart';
+import 'number_insights.dart';
 
 /// 抓目录时出的错。
 ///
@@ -256,6 +257,57 @@ class NumberFetcher({
       }
     }
     throw last!;
+  }
+
+  /// 抓一个号码的活动快照（**含收录时间**）。
+  ///
+  /// 抓的是号码详情页 `/numbers/<11 位>/` 的 HTML，不是某个接口 ——
+  /// 收录时间只在那页的 `<script id="fus-number-insights">` 里，目录页
+  /// 没有。理由见 `number_insights.dart` 的文档。
+  ///
+  /// [digits] 收 10 位（`4044225634`）或 11 位（`14044225634`），
+  /// 因为界面和目录两处给的形状不一样。
+  ///
+  /// 返回 null 表示**站点没给**（页面没这块、快照过期、号码对不上）。
+  /// 抛 [NumberFetchError] 表示**我们没抓到**（网络、出口、HTTP 错误）。
+  /// 两种失败必须分开：前者是「这号没有数据」，后者是「再试一次可能就有」，
+  /// 界面上该说的和该做的都不一样。
+  Future<NumberInsights?> fetchInsights(String digits) async {
+    final eleven = digits.length == 10 ? '1$digits' : digits;
+    if (eleven.length != 11) {
+      throw const NumberFetchError('号码位数不对', retryable: false);
+    }
+    final uri = Uri.parse('$base/numbers/$eleven/');
+
+    late final HttpClientResponse res;
+    try {
+      final req = await _http.getUrl(uri).timeout(const Duration(seconds: 20));
+      req.headers.set(HttpHeaders.userAgentHeader, userAgent);
+      // 从目录点进来时站点就是这么带的 referer。直接开号码页不带的话
+      // 站点可能当外链处理（和目录抓取同一套逻辑）。
+      req.headers.set(HttpHeaders.refererHeader, '$base/numbers/');
+      req.headers.set(
+        HttpHeaders.acceptHeader,
+        'text/html,application/xhtml+xml',
+      );
+      res = await req.close().timeout(const Duration(seconds: 20));
+    } on NumberFetchError {
+      rethrow;
+    } on Exception catch (e) {
+      throw NumberFetchError('抓号码页失败：$e');
+    }
+
+    if (res.statusCode != HttpStatus.ok) {
+      unawaited(res.drain<void>().catchError((Object _) {}));
+      throw NumberFetchError(
+        '号码页返回 HTTP ${res.statusCode}',
+        retryable: res.statusCode != HttpStatus.notFound,
+      );
+    }
+
+    final body = await res.transform(utf8.decoder).join();
+    // 解析失败不抛 —— 那是「站点没给/给了坏的」，不是「我们抓失败」。
+    return parseNumberInsights(body, wantDigits: eleven);
   }
 
   /// 释放连接。页面销毁时调用，`force: true` 顺手掐掉还在飞的请求。

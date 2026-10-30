@@ -46,11 +46,42 @@ class _Cache() {
 /// 上次用的完整 UA。
 const kUserAgentKey = 'ua_v1';
 
+/// 整份身份画像。JSON。
+///
+/// 和 [kUserAgentKey] 并存：老键只存 UA，读它恢复出来的身份**屏幕和
+/// 时区还是本机的** —— 那是个自相矛盾的半身份。新键存全，老键留着
+/// 只为了兼容已升级的用户（读到老键就当成「只有 UA」）。
+const kProfileKey = 'profile_v1';
+
+/// 待清标记。换了身份但还没清站点数据时置 1。
+///
+/// 为什么需要这个：出口页没有 WebView，跑不了删 IndexedDB 的脚本。
+/// 那里点「换一个身份」只能清原生层（cookie/缓存），密钥还在盘上。
+/// 收件箱下次打开页面时看到这个标记，会先把密钥清掉再加载 ——
+/// 不清的话站点看到的是「新 UA + 旧密钥」，身份对不上。
+const kWipePendingKey = 'wipe_pending_v1';
+
 /// 上次选的出口 id（`scheme://host:port`，不含密码）。
 const kEgressIdKey = 'egress_v1';
 
 /// 上次选的出口在清单里的下标。id 找不到时的兜底。
 const kEgressIndexKey = 'egress_index_v1';
+
+/// 收藏的号码。逗号分隔。
+///
+/// 不用 `setStringList`：`Store` 只有 `getString`/`getInt` 两个原语，
+/// 为一个字段加第三个原语会让那个类多一条要维护的路径。号码是纯数字，
+/// 逗号分隔不会有歧义。
+const kStarsKey = 'stars_v1';
+
+/// 号码 ↔ 访客记忆 + 出口↔身份绑定 + 拒绝记录。JSON。
+const kVisitorsKey = 'visitors_v1';
+
+/// 身份 id ↔ UA 还原表。JSON。
+///
+/// 单独一份而不是塞进 `visitors_v1`：两者生命周期不同 —— 名册要
+/// 「记得所有用过的身份」，记忆只需要最近那几个。
+const kRosterKey = 'roster_v1';
 
 /// 一个够用的持久化门面。
 ///

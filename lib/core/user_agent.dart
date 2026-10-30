@@ -16,8 +16,13 @@ library;
 
 import 'dart:math';
 
+import '../data/identity_profile.dart';
+
 /// 当前正在用的身份。
 BrowserIdentity _current = BrowserIdentity.fallback;
+
+/// 当前身份画像。null = 还没换过（还是内核那台机器）。
+IdentityProfile? _currentProfile;
 
 /// 内核大版本。用来给新身份定基准。
 int? _kernelMajor;
@@ -45,20 +50,24 @@ BrowserIdentity? get kernelIdentity {
   );
 }
 
-/// 安卓机型的候选池。
+/// 回到内核真值。
 ///
-/// 全部是**真实存在**的机型和对应的安卓版本。编一个不存在的机型
-/// （比如「Pixel 12」）反而更可疑 —— 真机 UA 里的机型串都能查到。
-const _androidModels = <(String, String)>[
-  ('Pixel 8 Pro', '14'),
-  ('Pixel 7a', '14'),
-  ('Pixel 7', '13'),
-  ('SM-S918B', '14'),
-  ('SM-S911B', '13'),
-  ('SM-A546E', '13'),
-  ('V2312A', '14'),
-  ('CPH2581', '14'),
-];
+/// 清掉画像（屏幕、时区回到本机真实值）并把 UA 换回内核报的那串。
+/// 内核没探到（`_kernelUa == null`）时**什么都不做**，返回 false ——
+/// 没有真值可回，假装回去只会造出一个更假的身份。
+bool resetIdentity() {
+  final ua = _kernelUa;
+  if (ua == null) return false;
+  _currentProfile = null;
+  _current = BrowserIdentity(
+    userAgent: ua,
+    model: _parseModel(ua) ?? _current.model,
+    chromeMajor: _parseMajor(ua) ?? _current.chromeMajor,
+    androidVersion: _parseAndroid(ua) ?? _current.androidVersion,
+  );
+  return true;
+}
+
 
 /// 造一个身份随机数。注入进来是为了可测。
 typedef RandomSource = Random Function();
@@ -108,34 +117,42 @@ int? get kernelMajor => _kernelMajor;
 
 /// 换一个身份。
 ///
-/// 换的是**机型 + 安卓版本 + Chrome 小版本**三样，UA 串整体重拼 ——
-/// 只改其中一样会造出自相矛盾的身份。
+/// **换的是整套环境，不是只换 UA。**
+///
+/// 只换 UA 是自欺：站点同时读 `screen.width`、`hardwareConcurrency`、
+/// `deviceMemory`、时区、`Sec-CH-UA-*` 系列。UA 说「Pixel 8 Pro」而屏幕
+/// 还是原来那块、时区还是东八区，等于告诉对方这串 UA 是手改的 —— 比
+/// 不换更容易被抓。
+///
+/// 真正换掉这个「人」的是 IndexedDB 里那对 P-256 密钥，那一步在
+/// `platform/site_wipe.dart`，不在这个函数里。这个函数只负责**表面
+/// 那一层**，两者必须一起做。
 ///
 /// Chrome 大版本只在 `内核值 ±2` 里动。窗口是对称的（原来写的是
 /// `nextInt(4) - 2` = {−2,−1,0,+1}，均值 −0.5，每换一次就往下漂半个版本，
 /// 换十几次之后大版本已经和真实内核差一代了）。
-BrowserIdentity rotateIdentity([Random? rnd]) {
+IdentityProfile rotateIdentity([Random? rnd]) {
   final r = rnd ?? Random();
-  final baseMajor = _kernelMajor ?? _current.chromeMajor;
-  final major = baseMajor + r.nextInt(5) - 2;
-  final (model, android) = _androidModels[r.nextInt(_androidModels.length)];
-
-  // 小版本也要真：`Chrome/141.0.7390.122` 这种形状。
-  final build = 6000 + r.nextInt(2000);
-  final patch = r.nextInt(200);
-  final ua =
-      'Mozilla/5.0 (Linux; Android $android; $model Build/UQ1A.240205.004) '
-      'AppleWebKit/537.36 (KHTML, like Gecko) '
-      'Chrome/$major.0.$build.$patch Mobile Safari/537.36';
+  final p = IdentityProfile.mint(
+    kernelMajor: _kernelMajor ?? _current.chromeMajor,
+    rnd: r,
+  );
 
   _current = BrowserIdentity(
-    userAgent: ua,
-    model: model,
-    chromeMajor: major,
-    androidVersion: android,
+    userAgent: p.userAgent,
+    model: p.model,
+    chromeMajor: p.chromeMajor,
+    androidVersion: p.androidVersion,
   );
-  return _current;
+  _currentProfile = p;
+  return p;
 }
+
+/// 当前身份画像（含屏幕、时区、Client Hints）。
+///
+/// 没换过身份时是 `null` —— 那表示「还是内核给的那台机器」，不是
+/// 「不知道」。两者不能混。
+IdentityProfile? get currentProfile => _currentProfile;
 
 /// 用内核报的 UA 建立基准身份。
 ///
@@ -209,4 +226,31 @@ void restoreUserAgent(String? raw) {
     chromeMajor: major ?? _current.chromeMajor,
     androidVersion: _parseAndroid(ua) ?? _current.androidVersion,
   );
+}
+
+/// 把一串 UA 设成当前身份。
+///
+/// 和 [restoreUserAgent] 是同一个动作，但**语义不同**：那个是「从磁盘
+/// 读回上次的身份」，这个是「访客会话要求切到这个身份」。分开命名是因为
+/// 调用点读起来该是哪个就是哪个 —— 一个地方说「恢复」，一个地方说「切换」，
+/// 混用会让人以为它们在做什么不一样的事。
+///
+/// 空串**不生效**：那会把身份变成空 UA，而空 UA 比旧 UA 更可疑。
+void applyUserAgent(String ua) {
+  if (ua.trim().isEmpty) return;
+  restoreUserAgent(ua);
+}
+
+/// 把一整套身份画像设成当前身份。
+///
+/// 和 [applyUserAgent] 的区别是**它把屏幕、时区、Client Hints 一起换**。
+/// 换身份必须走这个，只设 UA 是「换了一半」—— 站点一对比就知道。
+void applyIdentityProfile(IdentityProfile p) {
+  _current = BrowserIdentity(
+    userAgent: p.userAgent,
+    model: p.model,
+    chromeMajor: p.chromeMajor,
+    androidVersion: p.androidVersion,
+  );
+  _currentProfile = p;
 }

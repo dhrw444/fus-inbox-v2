@@ -101,31 +101,65 @@ MergeResult mergeFrame({
 
 /// 排序：新的在前。
 ///
-/// ## 为什么不用 `DateTime.parse`
+/// ## 时间必须归一化之后再比，不能直接比字符串
 ///
-/// 站点的时间文本格式不固定（`2 min ago`、`09:31`、`2026-10-29`、空串）。
-/// 解析失败就抛，一条脏数据能让整个列表崩。所以这里**不解析**，只按
-/// 文本形状给一个粗略的排序键 —— 排序略有不精确是可以接受的（同一分钟内
-/// 的两条谁先谁后无所谓），崩掉不可接受。
+/// 站点的 `received_at` **格式不统一** —— 站点自己解析它时要先判时区：
+///   live.js:267 `function parseUTC(raw){return typeof raw==='string'&&raw?Date.parse(/(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw)?raw:raw+'Z'):NaN;}`
+/// 那个三元分支存在的唯一理由就是「有的带 `Z`、有的不带」。若格式恒定，
+/// 这段代码是死分支，站点不会写它。
 ///
-/// 判据：
-///   1. 空串排最后（没有时间信息的放后面）
-///   2. 含「ago」/「前」的是相对时间 → 越短的数字越新
-///   3. 其余按文本倒序（ISO 日期和 `HH:MM` 倒序恰好都是新的在前）
-int _sortKey(SmsMessage m) {
-  final t = m.time.trim();
-  if (t.isEmpty) return 0; // 最低优先级
-  return 1;
+/// 而 DOM 路径给的时间是 `toISOString()`（定宽 24 字符，带 `Z`）：
+///   live.js:544 `time.dateTime=d.toISOString()`
+///
+/// 两种形状直接 `compareTo` 会在 `'T'` vs `' '`、`'Z'` vs 空处就分叉，
+/// 排出来的顺序与真实时间无关。所以这里先解析成时间戳再比。
+///
+/// ## 解析失败不抛
+///
+/// `DateTime.tryParse` 失败返回 null，不是抛异常 —— 一条脏数据不该让整个
+/// 列表崩。解析不出来的排在有时间的后面。
+///
+/// ## 站点补 `Z` 的语义
+///
+/// 站点对不带时区的串**补 `Z`**（当 UTC 处理）。这里照同一规则办，
+/// 否则同一批数据在 App 和站点上会排出两种顺序。
+DateTime? _parseSiteTime(String raw) {
+  final t = raw.trim();
+  if (t.isEmpty) return null;
+  // 已经带时区后缀（`Z` 或 `±hh:mm`）就直接解析。
+  final hasZone = RegExp(r'(?:Z|[+-]\d{2}:?\d{2})$').hasMatch(t);
+  return DateTime.tryParse(hasZone ? t : '${t}Z');
 }
 
+/// 比较键：有时间的给时间戳，没时间的给 null（排最后）。
+int? _timeKey(SmsMessage m) => _parseSiteTime(m.time)?.millisecondsSinceEpoch;
+
 int _byTimeDesc(SmsMessage a, SmsMessage b) {
-  final ka = _sortKey(a);
-  final kb = _sortKey(b);
-  if (ka != kb) return kb - ka; // 有时间的在前
-  // 同组内按文本倒序。ISO 日期、`HH:MM` 的字典序倒排恰好等于时间倒排。
-  final c = b.time.compareTo(a.time);
-  if (c != 0) return c;
-  // 时间完全相同（或都为空）时按 id 倒序 —— 保证排序**稳定**，
-  // 否则同一批数据两次渲染顺序可能不同，列表会闪。
+  final ta = _timeKey(a);
+  final tb = _timeKey(b);
+  // 有时间的在前，没时间的在后。
+  if (ta != null && tb == null) return -1;
+  if (ta == null && tb != null) return 1;
+  if (ta != null && tb != null) {
+    final c = tb.compareTo(ta); // 新的在前
+    if (c != 0) return c;
+  }
+  // 时间相同（或都缺）时按编号倒序。
+  //
+  // **必须按数值比，不能按字符串比。** 站点给的是 `event_id` 数字
+  // （live.js:541 `card.dataset.eventId=String(m.event_id)`），位数不等很常见：
+  // 字符串比较是逐码元比的（SDK `dart:core/string.dart` 的 `compareTo` 文档：
+  // 「ordering is the same as the ordering of the code units at the first
+  // position where the two strings differ」），于是 `'99' > '123'` ——
+  // 数值上 123 更新，却被排到后面。
+  //
+  // 两边都能转成数字时按数字比；转不动的退回字符串比（保证排序仍是全序，
+  // 不会因为返回 0 让 `List.sort` 的顺序在两次渲染间漂）。
+  final na = int.tryParse(a.id);
+  final nb = int.tryParse(b.id);
+  if (na != null && nb != null) {
+    final c = nb.compareTo(na);
+    if (c != 0) return c;
+  }
   return b.id.compareTo(a.id);
 }

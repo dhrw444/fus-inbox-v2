@@ -8,7 +8,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show FilteringTextInputFormatter;
 
-import '../main.dart' show egress;
+import '../main.dart' show egress, readStars, writeStars;
 import 'egress_page.dart';
 import 'inbox_page.dart';
 import 'numbers_page.dart';
@@ -102,7 +102,11 @@ class _HomePageState() extends State<HomePage> {
                   MaterialPageRoute<void>(
                     // 出口解析器是**回调**，不是快照 —— 桥的端口会变
                     // （换出口、重启），抓一个快照就等于永远指向死端口。
-                    builder: (_) => NumbersPage(resolveEgress: egress.egress),
+                    builder: (_) => NumbersPage(
+                      resolveEgress: egress.egress,
+                      loadStars: readStars,
+                      saveStars: writeStars,
+                    ),
                   ),
                 );
               },

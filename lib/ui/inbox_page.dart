@@ -30,12 +30,19 @@ import 'package:flutter/services.dart'
     show Clipboard, ClipboardData, rootBundle;
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
+import '../core/load_failure.dart';
+import '../core/site_grant.dart';
 import '../core/user_agent.dart';
 import '../data/egress.dart';
 import '../data/inbox_state.dart';
 import '../data/inbox_store.dart';
 import '../data/verify_round.dart';
-import '../main.dart' show egress;
+import '../data/visitor_session.dart';
+import '../core/store.dart';
+import '../main.dart'
+    show egress, readRoster, readVisitors, store, writeRoster, writeVisitors;
+import '../platform/identity_script.dart';
+import '../platform/site_wipe.dart';
 import '../platform/web_view.dart';
 import 'widgets/message_card.dart';
 
@@ -90,20 +97,116 @@ class _InboxPageState() extends State<InboxPage> {
   Timer? _loadMoreTick;
   Timer? _watchdog;
 
+  /// 访客会话。打开页面时决定用哪个出口 + 哪个身份。
+  ///
+  /// 它读「这个号码上次是谁看的」记忆，有可用记忆就切回那个出口 + 身份。
+  /// 站点拒绝时它给出「身份和 IP 一起换」的方案。
+  late final VisitorSession _session;
+
+  /// 这个号码的纯数字。访客记忆按它索引。
+  late final String _digits;
+
   @override
   void initState() {
     super.initState();
+    _digits = _digitsOf(widget.inboxUrl);
+    _session = VisitorSession(
+      book: readVisitors(),
+      roster: readRoster(),
+      currentEgress: () => egress.current,
+      egressPool: () => egress.manifest,
+      switchEgress: (p) => egress.useProxy(p),
+      applyIdentity: applyIdentityProfile,
+      mintIdentity: rotateIdentity,
+      wipeSiteData: _wipeSite,
+      markWipePending: () => store.writeInt(kWipePendingKey, 1),
+    );
     _store.onChanged = _onStoreChanged;
     unawaited(_loadScript());
     _armWatchdog();
     _startVerifyTick();
-    // 把 WebView 的流量指到桥。
+    // 先把访客决定好、应用上，**再**加载页面。
     //
-    // **这一步必须在页面加载之前** —— 代理是进程级的，页面已经开始
-    // 加载时再设，第一个请求已经用真实 IP 发出去了。而且必须在这里做，
-    // 不能只依赖首页那次设置：桥可能被重建（换出口），端口变了，
-    // 而 `ProxyController` 的 override 还指着旧端口。
-    unawaited(_applyProxy());
+    // 顺序反了就是「先用旧身份打了站点一次，再换成新的」—— 那一次在
+    // 对方眼里是设备指纹变了，比不换更可疑。
+    unawaited(_openWithVisitor());
+  }
+
+  /// 有没有「换了身份但没清密钥」的待办。
+  ///
+  /// 出口页没有 WebView，删不了站点的 IndexedDB。它换完身份会打个标记，
+  /// 这里看到标记就说明**当前盘上那对密钥是上一个身份的** —— 必须先
+  /// 清掉再正常用，否则站点看到「新 UA + 旧密钥」。
+  Future<bool> _takeWipePending() async {
+    final v = await store.readInt(kWipePendingKey);
+    if (v == null || v == 0) return false;
+    await store.remove(kWipePendingKey);
+    return true;
+  }
+
+  /// 从收件页地址里取 11 位号码。取不到就返回空串（记忆功能跳过）。
+  String _digitsOf(String url) {
+    final m = RegExp(r'/numbers/(\d{10,11})').firstMatch(url);
+    return m?.group(1) ?? '';
+  }
+
+  /// 清站点数据。换身份时必须调。
+  ///
+  /// 返回 null 表示**清不了**（页面还不存在），不是「清失败」。
+  /// 这两件事必须分开：`false` 会让上层说「站点数据没清干净」，而
+  /// 真相是这次根本没清 —— 报错文案会把人带到错误的排查方向。
+  ///
+  /// 两段一起做，**顺序不能反**：
+  ///   1. 页面脚本删 IndexedDB `fus-reader-v1` + localStorage 的 sid
+  ///      —— 这是身份的根，必须在页面还活着、还在站点 origin 上时做
+  ///   2. 原生接口清 cookie / WebStorage / 缓存 —— 内核层，随时能清
+  ///
+  /// 先清内核再跑脚本的话，页面可能已经被导航走，脚本就碰不到站点的
+  /// IndexedDB 了。
+  Future<bool?> _wipeSite() async {
+    final c = _controller;
+    // 页面还没建（`initState` 阶段、或 WebView 已销毁）→ 清不了。
+    // 调用方据此打 `kWipePendingKey` 让 `_onPageFinished` 补做。
+    if (c == null) return null;
+    var ok = false;
+    try {
+      final r = await wipeSiteData(c);
+      ok = r.identityCleared;
+    } catch (_) {
+      ok = false;
+    }
+    await wipeKernelData();
+    return ok;
+  }
+
+  /// 决定访客 → 应用 → 加载页面。
+  Future<void> _openWithVisitor() async {
+    // 有「待清」标记 → 这一轮的第一件事是清密钥，不是加载页面。
+    _wipeOnLoad = await _takeWipePending();
+    if (_digits.isEmpty) {
+      // 地址里没号码（不该发生）→ 不碰身份，直接开。
+      await _applyProxy();
+      return;
+    }
+
+    VisitPlan plan;
+    try {
+      plan = await _session.open(_digits);
+    } catch (e) {
+      // 访客决策失败不该让页面打不开 —— 那会把「换个身份」这种可选
+      // 优化变成硬故障。退回当前出口直开。
+      _store.note('访客切换失败（$e），沿用当前出口。');
+      await _applyProxy();
+      return;
+    }
+
+    if (!mounted) return;
+    // 把决定说出来。用户需要知道「这一页是哪个 IP 在看的」，
+    // 否则他会以为一直是同一个出口。
+    _store.note(plan.reason);
+    // 出口变了才重新指桥 —— 没变时重设一次无害，但会打断正在进行的
+    // 请求，所以只在真的变了才设。
+    await _applyProxy();
   }
 
   /// 应用当前出口到 WebView。
@@ -135,9 +238,90 @@ class _InboxPageState() extends State<InboxPage> {
   // ── 接线 ────────────────────────────────────────────────
 
   /// 状态变了。**唯一**刷界面的地方。
+  ///
+  /// 顺带做两件「状态驱动的副作用」：
+  ///   1. 第一次拿到消息 → 记下「这个号码是这个访客看的」
+  ///   2. 站点拒绝 → 换身份 + 换 IP
+  ///
+  /// 放在这里而不是散在回调里：这两件事的触发条件都是「状态变成什么样」，
+  /// 而状态只有这一个变化点。散着挂必然漏一处，漏了不报错，只是记忆
+  /// 永远写不进去、或者被拒了还在傻等。
   void _onStoreChanged() {
     if (!mounted) return;
     setState(() {});
+    _reactToState();
+  }
+
+  /// 这次加载完要先清密钥。清完重载一次。
+  bool _wipeOnLoad = false;
+
+  /// 上一轮见过的 hold 标识。避免同一份拒绝反复触发轮换。
+  String? _lastHoldKey;
+
+  /// 是否已经为这个号码记过「成功」。
+  bool _remembered = false;
+
+  void _reactToState() {
+    final st = _store.state;
+
+    // ① 拿到消息 → 记一笔。
+    if (!_remembered && st.messages.isNotEmpty && _digits.isNotEmpty) {
+      _remembered = true;
+      _session.onSucceeded(_digits);
+      // 身份名册也要落盘 —— 否则重启后「切回当时那个身份」找不到 UA。
+      unawaited(writeRoster());
+      unawaited(writeVisitors());
+      return;
+    }
+
+    // ② 站点拒绝 → 换。
+    final hold = st.hold;
+    if (hold == null) {
+      _lastHoldKey = null;
+      return;
+    }
+
+    // 用 kind + retry 当标识：同一份拒绝重复上报不该反复轮换。
+    final key = '${hold.kind}|${hold.retrySeconds}';
+    if (key == _lastHoldKey) return;
+    _lastHoldKey = key;
+
+    // `503` 是站点自己忙，换什么都没用。
+    final temporary = hold.kind == HoldKind.temporary;
+    unawaited(_rotateOnHold(temporary: temporary, retry: hold.retrySeconds));
+  }
+
+  Future<void> _rotateOnHold({
+    required bool temporary,
+    required int retry,
+  }) async {
+    if (_digits.isEmpty) return;
+    VisitPlan? plan;
+    try {
+      plan = await _session.onRejected(
+        _digits,
+        temporary: temporary,
+        retrySeconds: retry,
+      );
+    } catch (e) {
+      _store.note('换访客失败（$e）');
+      return;
+    }
+    unawaited(writeRoster());
+    unawaited(writeVisitors());
+
+    if (!mounted) return;
+    if (plan == null) {
+      // 站点自己忙 → 什么都不做，只提示。
+      _store.note('站点暂时繁忙，等它自己恢复。');
+      return;
+    }
+    _store.note(plan.reason);
+    // 出口真的变了才重指桥 —— 不变时重设会打断正在飞的请求。
+    await _applyProxy();
+    // 换了访客 = 换了个人看这个号，页面必须重开。
+    // 不重开的话站点已经按旧身份记了这次访问，再重扫也拿不到东西。
+    if (mounted) await _reload();
   }
 
   Future<void> _loadScript() async {
@@ -161,6 +345,13 @@ class _InboxPageState() extends State<InboxPage> {
   /// 只推进状态、不做别的事 —— 判断全在 `VerifyRoundVal` 里。
   void _startVerifyTick() {
     _verifyTick?.cancel();
+    // 起算点在这里落定。**不能省** —— 不赋值的话 `_elapsed()` 恒为 0，
+    // 于是自动弹层和超时永远不会触发。
+    //
+    // 只在「这一轮刚开始」时落：已经跑着一轮的时候重进（比如页面加载完
+    // 又调一次）不该把等待时间清零，否则用户等了 5 秒又被重置回 0，
+    // 永远等不到自动弹层。
+    _roundStart ??= DateTime.now();
     _verifyTick = Timer.periodic(const Duration(milliseconds: 900), (_) {
       if (!mounted) return;
       // 弹层开着时**只查 cookie**，不碰页面。
@@ -190,13 +381,18 @@ class _InboxPageState() extends State<InboxPage> {
   ///
   /// 每次读都重新算 —— 不存字段。存字段的话要记得在每个 tick 更新它，
   /// 漏一处（比如从别的路径进来）就会读到旧值，而症状是「超时不触发」
-  /// 或「一进来就超时」，都很难联想到是这里。旧代码踩过。
+  /// 或「一进来就超时」，都很难联想到是这里。
   Duration _elapsed() {
     final start = _roundStart;
     if (start == null) return Duration.zero;
     return DateTime.now().difference(start);
   }
 
+  /// 这一轮的起算时刻。
+  ///
+  /// **必须在开新一轮时赋值**，否则 [_elapsed] 恒返回 0，于是
+  /// `shouldAutoPop` 和 `timedOut` 永远不会成立 —— 验证弹层既不自动弹、
+  /// 也不超时，整套状态机形同虚设。这个坑上一版就踩过（只读不写）。
   DateTime? _roundStart;
 
   /// 看 `cf_clearance` 到了没。到了就自动收层。
@@ -207,20 +403,29 @@ class _InboxPageState() extends State<InboxPage> {
   Future<void> _checkPassed() async {
     final c = _controller;
     if (c == null) return;
-    List<Cookie> cookies;
+
+    // 判据是站点自己的凭证，**不是 cookie**。
+    //
+    // 站点的会话凭证在 `localStorage` 的 `fus:reader:v1` 里，形状
+    // `{sid, until, offset}`，`sid` 是 32 位小写 hex（`reader.js:64`
+    // 的正则就是站点自己的判据）。
+    //
+    // **不能用 `cf_clearance`** —— 站点根本不下发它（`live.js` /
+    // `reader.js` 零命中，响应头也没有 Set-Cookie）。上一版拿它当判据，
+    // 于是「验证通过」永远检测不到，自动收层永不发生。
+    String? raw;
     try {
-      final jar = CookieManager.instance();
-      cookies = await jar.getCookies(url: WebUri(widget.inboxUrl));
+      raw = await c.evaluateJavascript(
+        source: "localStorage.getItem('$kSiteGrantKey')",
+      ) as String?;
     } catch (_) {
       return;
     }
-    final passed = cookies.any(
-      // `Cookie.value` 的类型是 `dynamic`（平台层返回的原始值），
-      // 直接 `?? ''` 得到的还是 `dynamic` —— `&&` 的操作数不是 bool，
-      // analyzer 会判 `non_bool_operand`。显式转一次字符串。
-      (e) => e.name == 'cf_clearance' && (e.value?.toString() ?? '').isNotEmpty,
-    );
-    if (!passed || !mounted) return;
+
+    // 判定逻辑在 `core/site_grant.dart`，那里能测；这里只管读。
+    if (!isLiveGrant(raw)) return;
+    if (!mounted) return;
+
     setState(() => _round = _round.close());
     _store.note('验证通过，继续加载。');
     await c.reload();
@@ -358,8 +563,19 @@ class _InboxPageState() extends State<InboxPage> {
                         key: _key,
                         userAgent: currentUserAgent,
                         scripts: [
-                          // 抓取层必须在**任何页面脚本之前**装好 ——
-                          // 站点自己的脚本一进来就会读 navigator。
+                          // **环境伪装必须排第一。**
+                          //
+                          // 它要在任何站点脚本之前把 `screen.width`、
+                          // `hardwareConcurrency`、时区这些改掉。只设
+                          // `userAgent` 的话，站点读到的还是本机真实值，
+                          // 和那串 UA 对不上 —— 一眼就是手改的。
+                          UserScript(
+                            source: identityScript(currentProfile),
+                            injectionTime:
+                                UserScriptInjectionTime.AT_DOCUMENT_START,
+                          ),
+                          // 抓取层紧跟其后。站点自己的脚本一进来就会读
+                          // navigator，晚一步就来不及。
                           UserScript(
                             source: _scannerScript,
                             injectionTime:
@@ -437,6 +653,25 @@ class _InboxPageState() extends State<InboxPage> {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 16),
         child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+      );
+    }
+    // 还有没显示出来的 → 先给「显示更多」。
+    //
+    // 这两个是不同的东西：`visible` 是「本机已收到但还没渲染」，
+    // `hasMore` 是「站点那边还有更早的没拉」。混成一个按钮会让用户
+    // 点一下以为在翻页，其实只是把已经在本机的几条放出来。
+    if (st.hasHidden) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: Center(
+          child: TextButton.icon(
+            onPressed: _store.revealMore,
+            icon: const Icon(Icons.expand_more, size: 18),
+            label: Text(
+              '显示更多（还有 ${st.messages.length - st.visible} 条）',
+            ),
+          ),
+        ),
       );
     }
     return Padding(
@@ -634,13 +869,64 @@ class _InboxPageState() extends State<InboxPage> {
   void _onPageFinished(String url) {
     if (!mounted) return;
     if (!_ready) setState(() => _ready = true);
+
+    // 出口页换过身份但没清密钥 → 现在是唯一能清的时机。
+    //
+    // **必须在这里清，不能在 `initState`**：那时 WebView 还没建，
+    // 脚本无处可跑。而且必须等页面真的在站点 origin 上 —— 只有那时
+    // `indexedDB.open('fus-reader-v1')` 才指向站点的库。
+    //
+    // 清完立刻重载：这一页是用旧密钥加载的，站点可能已经认了旧身份。
+    // 不重载的话这次访问算在旧身份头上，白换。
+    if (_wipeOnLoad) {
+      _wipeOnLoad = false;
+      unawaited(() async {
+        // controller 一定在（`_onPageFinished` 已经跑到），null 只可能是
+        // 异常路径。**清不掉就把标记写回去** —— 否则这次「换了身份没清
+        // 密钥」就这么过去了，用户下次打开还是同一个身份，而且没人知道。
+        if (await _wipeSite() == null) {
+          await store.writeInt(kWipePendingKey, 1);
+          return;
+        }
+        // 清干净了才重载：这一页是用旧密钥加载的，站点可能已经认了旧
+        // 身份，不重载这次访问算在旧身份头上，白换。
+        if (mounted) await _reload();
+      }());
+      return;
+    }
+
+    // 站点「ready」了。
+    //
+    // `markReady` 返回「是否第一次」，用来决定要不要补一次重扫：
+    // 每次都重扫会白白多发请求，完全不管又会漏掉「站点 ready 了但
+    // 没推消息」那种情况 —— 那一版就是这么丢消息的。
+    final (next, firstTime) = _round.markReady();
+    if (next != _round) setState(() => _round = next);
+    if (firstTime) {
+      // 站点已经就绪但抓取层还没报东西 → 主动要一次。
+      // 抓取层自己会在 DOM 稳定后报，这里只是补一发，重复的会被
+      // `mergeFrame` 按 id 去重，不会多出消息。
+      unawaited(_rescan());
+    }
     _startVerifyTick();
   }
 
   /// 页面加载出错。
   void _onError(WebResourceError e) {
     if (!mounted) return;
-    _store.fail(e.description.isEmpty ? '页面加载失败' : e.description);
+    // 安卓给的是 `WebViewClient.ERROR_*`（-1..-16），`description` 是内核
+    // 原文（`net::ERR_NAME_NOT_RESOLVED` 这种）。两者都交给
+    // `describeLoadFailure`，它先查码表、再按原文关键字猜 —— 直接把
+    // 英文原文甩给用户等于什么都没说。
+    // `toNativeValue()` 在安卓上返回 `WebViewClient.ERROR_*`（-1..-16），
+    // 正是 `describeLoadFailure` 的码表要的；`toValue()` 是跨平台的枚举
+    // 名（`HOST_LOOKUP` 这种），码表不认识时按关键字兜底用。
+    final f = describeLoadFailure(
+      e.type.toNativeValue() ?? -1,
+      e.description,
+      kind: e.type.toValue(),
+    );
+    _store.fail('${f.title}：${f.detail}');
   }
 
   /// 导航闸门：只放行站点自己的域名。
@@ -687,6 +973,13 @@ class _InboxPageState() extends State<InboxPage> {
     _verifyTick?.cancel();
     _loadMoreTick?.cancel();
     _store.reset();
+    // 重载 = 新的一轮。起算点和验证闸门都要重来，否则旧的 `_roundStart`
+    // 会让「已经等了 80 秒」这个判断在刚重载的页面上立刻成立，一进来
+    // 就判超时。
+    _roundStart = null;
+    _round = _round.restart();
+    // 换了页面 = 新的一次访问，成功记录要重新挣。
+    _remembered = false;
     try {
       await _controller?.loadUrl(
         urlRequest: URLRequest(url: WebUri(widget.inboxUrl)),

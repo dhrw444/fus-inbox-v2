@@ -17,6 +17,8 @@
 ///      说明原因，抓取那边会直接失败。
 library;
 
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 
@@ -298,7 +300,14 @@ class _EgressPageState() extends State<EgressPage> {
   /// 只写盘不改内存 = 这一轮还用旧的（用户以为没换）。
   void _rotate() {
     final next = rotateIdentity();
-    store.write(kUserAgentKey, next.userAgent);
+    // 存**整份画像**，不只 UA。只存 UA 的话重启后屏幕和时区会退回
+    // 本机真实值，而 UA 还是那台假机器 —— 一个自相矛盾的半身份，
+    // 比不换更容易被抓。
+    store.write(kProfileKey, jsonEncode(next.toJson()));
+    // 这里没有 WebView，删不了站点的 IndexedDB 密钥。
+    // 打个标记，收件箱下次打开页面时先清 —— 不清的话站点看到的是
+    // 「新 UA + 旧密钥」，比不换更容易被抓。
+    store.writeInt(kWipePendingKey, 1);
     setState(() {});
   }
 
@@ -315,8 +324,11 @@ class _EgressPageState() extends State<EgressPage> {
           .showSnackBar(const SnackBar(content: Text('启动时没拿到内核 UA，回不去')));
       return;
     }
+    // 两个键都删。只删新键的话，老键还在盘上，下次启动又读回来 ——
+    // 用户以为「回到真身」了，实际还是那个假的。
+    store.remove(kProfileKey);
     store.remove(kUserAgentKey);
-    restoreUserAgent(kernel.userAgent);
+    resetIdentity();
     setState(() {});
   }
 

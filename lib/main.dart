@@ -13,14 +13,19 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import 'core/store.dart';
 import 'core/user_agent.dart';
 import 'data/egress.dart';
+import 'data/identity_profile.dart';
+import 'data/identity_roster.dart';
 import 'data/proxy_config.dart';
+import 'data/visitor.dart';
 import 'ui/home_page.dart';
 import 'ui/theme/app_theme.dart';
 
@@ -34,6 +39,85 @@ final egress = Egress();
 
 /// 磁盘。
 final store = Store();
+
+/// 读回收藏的号码。
+Future<Set<String>> readStars() async {
+  final raw = await store.read(kStarsKey);
+  if (raw == null || raw.isEmpty) return <String>{};
+  return raw
+      .split(',')
+      .map((s) => s.trim())
+      .where((s) => s.isNotEmpty)
+      .toSet();
+}
+
+/// 写收藏。
+Future<void> writeStars(Set<String> digits) =>
+    store.write(kStarsKey, digits.join(','));
+
+/// 访客记忆。**进程内单例** —— 收件箱每次打开都要读它，从磁盘重读一遍
+/// 是浪费，而且多个页面同时打开时会有两份不一致的副本。
+final _visitors = VisitorBook();
+
+/// 身份名册。同样单例，理由同上。
+final _roster = IdentityRoster();
+
+/// 访客记忆读好了没。避免每次读都去磁盘。
+bool _visitorsLoaded = false;
+bool _rosterLoaded = false;
+
+/// 取访客记忆（必要时从磁盘恢复）。
+VisitorBook readVisitors() {
+  if (!_visitorsLoaded) {
+    _visitorsLoaded = true;
+    // 异步恢复，失败就当空的 —— 记忆丢了不影响打开号码。
+    unawaited(
+      store.read(kVisitorsKey).then((raw) {
+        if (raw == null || raw.isEmpty) return;
+        try {
+          _visitors.restore(jsonDecode(raw));
+        } catch (_) {
+          // 磁盘上那份坏了。当空的重来，不清盘 —— 清盘会让用户
+          // 下次重启又"没有记忆"，而他并不知道发生过什么。
+        }
+      }),
+    );
+  }
+  return _visitors;
+}
+
+/// 取身份名册（必要时从磁盘恢复）。
+IdentityRoster readRoster() {
+  if (!_rosterLoaded) {
+    _rosterLoaded = true;
+    unawaited(
+      store.read(kRosterKey).then((raw) {
+        if (raw == null || raw.isEmpty) return;
+        try {
+          final m = jsonDecode(raw);
+          if (m is Map) {
+            _roster.restore({
+              for (final e in m.entries)
+                if (e.key is String && e.value is String)
+                  e.key as String: e.value as String,
+            });
+          }
+        } catch (_) {
+          // 同上。
+        }
+      }),
+    );
+  }
+  return _roster;
+}
+
+/// 写访客记忆。调用方在「成功看过一个号」「换过身份」之后调。
+Future<void> writeVisitors() =>
+    store.write(kVisitorsKey, jsonEncode(_visitors.toJson()));
+
+/// 写身份名册。
+Future<void> writeRoster() =>
+    store.write(kRosterKey, jsonEncode(_roster.toMap()));
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -50,6 +134,20 @@ Future<void> main() async {
 
 /// 启动准备。
 Future<void> _bootstrap() async {
+  // 内置出口清单。**必须在读回上次出口之前**加载 —— 那个恢复动作是
+  // 按 id 在清单里找，清单空的时候必然找不到，于是每次都退回直连，
+  // 而用户会以为「上次选的出口丢了」。
+  //
+  // 出口页里也有一份加载（用户手动开那一页时），两处都是幂等的：
+  // `loadManifest` 只填清单，不碰当前选择。
+  try {
+    final text = await rootBundle.loadString('assets/proxies/builtin.txt');
+    egress.loadManifest(text);
+  } catch (e) {
+    // 清单读不到不该让应用起不来 —— 用户还能直连，或者自己手填一条。
+    // 但要在出口页里说出来（那里会显示清单为空）。
+  }
+
   // 内核真值。`getDefaultUserAgent` 在安卓上不需要 WebView 实例，
   // 直接问内核要 —— 这是唯一可信的来源。
   try {
@@ -65,8 +163,22 @@ Future<void> _bootstrap() async {
   //
   // **必须在探到内核之后、打开页面前**。顺序反了就是「拿旧 UA 打了
   // 一次站点，再换成新的」—— 那一次在对方眼里是设备指纹变了。
-  final savedUa = await store.read(kUserAgentKey);
-  if (savedUa != null) restoreUserAgent(savedUa);
+  //
+  // 先读整份画像；读不到再退回老键（只存 UA 的那份）。
+  // 老键恢复出来的身份屏幕和时区是本机真值，比新键差，但比没有好。
+  final savedProfile = await store.read(kProfileKey);
+  if (savedProfile != null && savedProfile.isNotEmpty) {
+    try {
+      final p = IdentityProfile.fromJson(jsonDecode(savedProfile));
+      if (p != null) applyIdentityProfile(p);
+    } catch (_) {
+      // 磁盘上那份坏了 → 退回读老键。
+    }
+  }
+  if (currentProfile == null) {
+    final savedUa = await store.read(kUserAgentKey);
+    if (savedUa != null) restoreUserAgent(savedUa);
+  }
 
   // 读回上次的出口。找不到那条就退回直连 —— **不猜**。
   //

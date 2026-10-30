@@ -143,13 +143,23 @@ void _testMerge() {
   {
     final many = [
       for (var i = 0; i < 250; i++)
-        // 时间要**等宽**：`padLeft(3,'0')` 保证 `10:099` < `10:249`，
-        // 字典序才等于时间序。用 `padLeft(2)` 的话 `10:249` 会排在 `10:49`
-        // 之后（字符串比较不看位数），测出来的「最新」是错的。
+        // 时间必须是**合法**的 ISO 串。
+        //
+        // 原来这里写 `'2026-10-29 10:${i.toString().padLeft(3, '0')}'`，
+        // 补三位是为了让字典序等于时间序 —— 但那造出的是 `10:099`
+        // （99 秒非法），`DateTime.tryParse` 返回 null。
+        // 排序一旦改成「先解析成时间戳」，这批消息就全都没有时间，
+        // 顺序退化成按编号比，用例断言的是排序而不是裁剪。
+        //
+        // 现在用秒数直接进时间串（`i` 最多 249，即 4 分 9 秒，合法），
+        // 裁剪与排序两件事就分开了。
         SmsMessage(
           id: 'id$i',
           text: 't',
-          time: '2026-10-29 10:${i.toString().padLeft(3, '0')}',
+          time:
+              '2026-10-29T10:'
+              '${(i ~/ 60).toString().padLeft(2, '0')}:'
+              '${(i % 60).toString().padLeft(2, '0')}',
         ),
     ];
     final r = mergeFrame(
@@ -196,6 +206,65 @@ void _testMerge() {
       firstFrameDone: false,
     ).messages.map((e) => e.id).toList();
     _ok('排序稳定', a.join(',') == b.join(','));
+  }
+
+  // ── 排序：带时区与不带时区混着来，要按真实时间排 ──
+  //
+  // 站点的 `received_at` 格式不统一（站点自己解析时要先判时区，见 live.js:267），
+  // 而 DOM 路径给的是 `toISOString()`（定宽带 Z，live.js:544）。
+  // 直接比字符串会在 `'T'` vs `' '`、`'Z'` vs 空处分叉。
+  {
+    final r = mergeFrame(
+      current: const [],
+      incoming: [
+        // UTC 04:00
+        _m('a', time: '2026-10-30T12:00:00+08:00'),
+        // UTC 11:00
+        _m('b', time: '2026-10-30T11:00:00Z'),
+        // UTC 11:30（不带时区，按 UTC 解释）
+        _m('c', time: '2026-10-30T11:30:00'),
+      ],
+      seenIds: const {},
+      firstFrameDone: false,
+    );
+    _eq('跨时区按真实时间排', r.messages.map((e) => e.id).join(','), 'c,b,a');
+  }
+
+  // ── 排序：时间都缺时，数字编号必须按数值比，不能按字符串比 ──
+  //
+  // 站点给的是 `event_id` 数字（live.js:541 `String(m.event_id)`），位数不等很常见。
+  // 字符串比较是逐码元比的，`'99' > '123'` —— 数值上 123 更新却排到后面。
+  {
+    final r = mergeFrame(
+      current: const [],
+      incoming: [_m('99'), _m('123'), _m('1000')],
+      seenIds: const {},
+      firstFrameDone: false,
+    );
+    _eq('数字编号按数值倒序', r.messages.map((e) => e.id).join(','), '1000,123,99');
+  }
+
+  // ── 合并：`isProtected` 真值粘住，不被后到的 false 抹掉 ──
+  //
+  // DOM 路径靠「页面上有没有那句说明」反推，说明还没渲染时会给出 false；
+  // 接口路径给的是站点真值 true。false 不该覆盖 true。
+  {
+    const old = SmsMessage(id: 'p', text: '', isProtected: true);
+    final merged = old.mergeWith(const SmsMessage(id: 'p', text: ''));
+    _ok('true 不被 false 抹掉', merged.isProtected);
+
+    // 反方向：先 false 后 true，也该变成 true。
+    const plain = SmsMessage(id: 'q', text: '');
+    final up = plain.mergeWith(
+      const SmsMessage(id: 'q', text: '', isProtected: true),
+    );
+    _ok('false 可以变 true', up.isProtected);
+
+    // 正文补齐之后标记仍在（界面按正文非空走正文分支，标记不影响显示，
+    // 但状态本身不该丢）。
+    final filled = old.mergeWith(const SmsMessage(id: 'p', text: 'hello'));
+    _ok('补正文后标记仍在', filled.isProtected);
+    _eq('正文补上了', filled.text, 'hello');
   }
 }
 
