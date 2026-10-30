@@ -171,16 +171,78 @@ void _checkPrimaryConstructors(String path, String src) {
   final lines = src.split('\n');
   for (var i = 0; i < lines.length; i++) {
     final l = lines[i];
-    // 传统写法：class X extends ... 后面跟着 `X(...)` 构造器
-    final m = RegExp(r'^class ([A-Z]\w*)( extends| \{)').firstMatch(l);
+
+    // ── class ──
+    // `class X extends Y` / `class X {` 都是传统写法。
+    // **但纯静态类不该被要求主构造器**：`class X { static const ... }` 没有
+    // 实例，写 `class X()` 只是满足规则、没有任何意义。判据是「类体里有没有
+    // 非 static 的实例成员」—— 有才算缺构造器。
+    final m = RegExp(r'^class ([A-Z]\w*)( extends| implements| \{)')
+        .firstMatch(l);
     if (m != null) {
-      _fail(path, i + 1, 'use_primary_constructors', m.group(1)!);
+      final name = m.group(1)!;
+      if (_hasInstanceMember(lines, i)) {
+        _fail(path, i + 1, 'use_primary_constructors', name);
+      }
       continue;
     }
-    // enum 要带 ()
+
+    // ── enum ──
+    // 三种写法，前两种都合法：
+    //   enum X() { a, b }              无参 → 空括号
+    //   enum X { a('A'); const X(...); } 带参 → 显式构造器，**不能加空括号**
+    //                                    （加了会和显式构造器重名，编译直接报
+    //                                    「X is already declared」）
+    //   enum X { a, b }                传统写法 → 报
     final e = RegExp(r'^enum ([A-Z]\w*) \{').firstMatch(l);
     if (e != null) {
-      _fail(path, i + 1, 'use_primary_constructors', 'enum ${e.group(1)} 缺 ()');
+      final name = e.group(1)!;
+      // 带参（枚举值后面跟括号）就不能用空括号写法。
+      if (!_enumHasArguments(lines, i)) {
+        _fail(path, i + 1, 'use_primary_constructors', 'enum $name 缺 ()');
+      }
     }
   }
+}
+
+/// 这个类的类体里有没有非 static 的实例成员。
+///
+/// 有 → 是个正常的类，该用主构造器；没有 → 纯静态工具类，不该被要求。
+bool _hasInstanceMember(List<String> lines, int classLine) {
+  var depth = 0;
+  var opened = false;
+  for (var i = classLine; i < lines.length; i++) {
+    final l = lines[i];
+    depth += 'lbrace(l)'.replaceAll('lbrace', '{').allMatches(l).length;
+    depth -= '}'.allMatches(l).length;
+    if (i == classLine && depth > 0) opened = true;
+    if (opened && i > classLine) {
+      // 类体结束
+      if (depth <= 0) break;
+      // 一层的成员声明
+      final t = l.trim();
+      if (depth == 1 &&
+          t.isNotEmpty &&
+          !t.startsWith('//') &&
+          !t.startsWith('static') &&
+          !t.startsWith('const ') &&
+          RegExp(r'^(final |late |var |[A-Z]\w*[< ]').hasMatch(t)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/// 这个枚举的枚举值带参数吗。
+///
+/// `enum X { a('A'), b('B'); }` → true（必须显式构造器，不能加空括号）
+/// `enum X { a, b }` → false（可以用空括号）
+bool _enumHasArguments(List<String> lines, int enumLine) {
+  for (var i = enumLine; i < lines.length; i++) {
+    final l = lines[i];
+    if (l.trim() == '}') break;
+    if (RegExp(r"^\s+[a-z]\w*\('").hasMatch(l)) return true;
+  }
+  return false;
 }

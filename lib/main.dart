@@ -17,6 +17,7 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import 'core/user_agent.dart';
 import 'ui/home_page.dart';
+import 'ui/theme/app_theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -98,13 +99,17 @@ class const _StartupFailed({required this.message}) extends StatelessWidget {
 class const FusApp({super.key}) extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
+    // 外观沿用旧项目的：中性灰阶，不是 Material 默认紫，也不是之前
+    // 这里临时用的蓝色种子色。种子色那条路会生成一整套**带彩的**派生色，
+    // 而旧的观感是「素」—— 内容全是短信文本，彩色会抢注意力。
+    final theme = AppTheme(ThemeData().textTheme);
+
     return MaterialApp(
       title: '短信查看器',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorSchemeSeed: const Color(0xFF3B6EA5),
-        useMaterial3: true,
-      ),
+      theme: theme.scheme(),
+      darkTheme: theme.scheme(dark: true),
+      themeMode: ThemeMode.system,
       home: const HomePage(),
     );
   }

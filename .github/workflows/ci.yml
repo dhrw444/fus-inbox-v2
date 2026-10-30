@@ -50,6 +50,11 @@ jobs:
       - name: 版本号校验测试
         run: dart run tool/release_version_test.dart
 
+      # 枚举的 label 是界面文案，`resolve` 是明暗判定的唯一入口。
+      # 这两样都不依赖 Flutter，所以能在沙箱和 CI 上真跑。
+      - name: 枚举测试
+        run: dart run tool/enums_test.dart
+
       # 抓取脚本的语法。JS 出错不会让 Dart 编译失败，只会在真机上
       # 静默什么都不做 —— 所以必须单独查。
       - name: JS 语法
