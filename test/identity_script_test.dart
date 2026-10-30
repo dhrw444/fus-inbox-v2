@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:fus_inbox/data/identity_profile.dart';
-import 'package:fus_inbox/platform/identity_script.dart';
+import 'package:fus_inbox_v2/data/identity_profile.dart';
+import 'package:fus_inbox_v2/platform/identity_script.dart';
 
 IdentityProfile _p({
   String lang = 'en-US',

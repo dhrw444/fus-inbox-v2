@@ -6,8 +6,8 @@
 library;
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:fus_inbox/data/directory_filter.dart';
-import 'package:fus_inbox/data/number_insights.dart';
+import 'package:fus_inbox_v2/data/directory_filter.dart';
+import 'package:fus_inbox_v2/data/number_insights.dart';
 
 /// 真实样本，逐字来自站点。改一个字都会让下面的断言失败。
 const _realIsland = '''

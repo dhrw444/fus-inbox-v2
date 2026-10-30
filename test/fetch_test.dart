@@ -8,8 +8,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:fus_inbox/data/number_entry.dart';
-import 'package:fus_inbox/data/number_fetch.dart';
+import 'package:fus_inbox_v2/data/number_entry.dart';
+import 'package:fus_inbox_v2/data/number_fetch.dart';
 
 import 'package:test/test.dart';
 

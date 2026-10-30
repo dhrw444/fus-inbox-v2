@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:fus_inbox/core/load_failure.dart';
+import 'package:fus_inbox_v2/core/load_failure.dart';
 
 void main() {
   group('错误翻译', () {

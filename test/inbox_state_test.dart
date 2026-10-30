@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:fus_inbox/data/inbox_store.dart';
+import 'package:fus_inbox_v2/data/inbox_store.dart';
 
 /// 造一帧真消息，走 `ingest` 的真实解析路径。
 String frameJson(int n) {

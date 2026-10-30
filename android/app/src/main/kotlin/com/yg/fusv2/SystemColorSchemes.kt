@@ -7,7 +7,7 @@
  * 读不到某个角色时回落到同名的非模式角色，再取不到就跳过 —— 让 Dart 侧
  * 按「缺了就回落内置配色」处理，比在这里抛异常强：取色失败不该让界面没颜色。
  */
-package com.yg.fusinbox
+package com.yg.fusv2
 
 import android.content.Context
 import android.graphics.Color

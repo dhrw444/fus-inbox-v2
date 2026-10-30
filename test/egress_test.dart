@@ -10,9 +10,9 @@ library;
 
 import 'dart:io';
 
-import 'package:fus_inbox/data/egress.dart';
-import 'package:fus_inbox/data/proxy_config.dart';
-import 'package:fus_inbox/data/proxy_probe.dart';
+import 'package:fus_inbox_v2/data/egress.dart';
+import 'package:fus_inbox_v2/data/proxy_config.dart';
+import 'package:fus_inbox_v2/data/proxy_probe.dart';
 import 'package:test/test.dart';
 
 /// 一条能通的假上游（SOCKS5）。这里只需要「桥能 start 成功」，

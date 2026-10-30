@@ -20,16 +20,16 @@ import 'dart:math';
 
 import 'package:test/test.dart';
 
-import 'package:fus_inbox/core/code_extract.dart';
-import 'package:fus_inbox/core/sms_message.dart';
-import 'package:fus_inbox/core/user_agent.dart';
-import 'package:fus_inbox/data/frame.dart';
-import 'package:fus_inbox/data/number_entry.dart';
-import 'package:fus_inbox/data/proxy_config.dart';
-import 'package:fus_inbox/data/inbox_state.dart';
-import 'package:fus_inbox/data/inbox_store.dart';
-import 'package:fus_inbox/data/verify_round.dart';
-import 'package:fus_inbox/data/merge_frame.dart';
+import 'package:fus_inbox_v2/core/code_extract.dart';
+import 'package:fus_inbox_v2/core/sms_message.dart';
+import 'package:fus_inbox_v2/core/user_agent.dart';
+import 'package:fus_inbox_v2/data/frame.dart';
+import 'package:fus_inbox_v2/data/number_entry.dart';
+import 'package:fus_inbox_v2/data/proxy_config.dart';
+import 'package:fus_inbox_v2/data/inbox_state.dart';
+import 'package:fus_inbox_v2/data/inbox_store.dart';
+import 'package:fus_inbox_v2/data/verify_round.dart';
+import 'package:fus_inbox_v2/data/merge_frame.dart';
 
 /// 断言失败时 `package:test` 会打印 got/want 差异，并让进程退出非 0 ——
 /// 比原来只 print 一行 `FAIL` 可靠：原脚本的 `_fail` 只被打印，没有 exitCode，

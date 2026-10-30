@@ -11,7 +11,7 @@
  *
  * 通道名常量在 lib/core/webview/platform_channel.dart，两边必须一致。
  */
-package com.yg.fusinbox
+package com.yg.fusv2
 
 import android.content.Intent
 import android.net.Uri

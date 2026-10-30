@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:fus_inbox/data/visitor.dart';
+import 'package:fus_inbox_v2/data/visitor.dart';
 
 /// 断言失败时 `package:test` 会打印 got/want 差异并让进程退出非 0。
 void _ok(String label, bool cond) => expect(cond, isTrue, reason: label);

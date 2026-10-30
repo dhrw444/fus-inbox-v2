@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:fus_inbox/core/site_grant.dart';
+import 'package:fus_inbox_v2/core/site_grant.dart';
 
 void main() {
   // 站点真实形状：32 位 hex sid + 毫秒 until。

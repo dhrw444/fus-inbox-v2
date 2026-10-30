@@ -1,4 +1,4 @@
-name: fus_inbox
+name: fus_inbox_v2
 description: "查看公共号码池的最新短信。可选号，可按州与区号筛选。"
 publish_to: "none"
 

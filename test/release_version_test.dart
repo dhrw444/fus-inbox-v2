@@ -61,14 +61,14 @@ void main() {
     // ── updateReleaseVersion ──
     {
       const pubspec = '''
-name: fus_inbox
+name: fus_inbox_v2
 version: 0.0.0+1
 environment:
   sdk: ^3.13.0
 ''';
       final out = updateReleaseVersion(pubspec, '1.2.3', '42');
       _ok('写入了新版本', out.contains('version: 1.2.3+42'));
-      _ok('别的东西没动', out.contains('name: fus_inbox'));
+      _ok('别的东西没动', out.contains('name: fus_inbox_v2'));
       _ok('sdk 约束没动', out.contains('sdk: ^3.13.0'));
       _eq('只多一行内容', out.split('\n').length, pubspec.split('\n').length);
     }

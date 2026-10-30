@@ -10,8 +10,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:fus_inbox/data/proxy_config.dart';
-import 'package:fus_inbox/data/socks_bridge.dart';
+import 'package:fus_inbox_v2/data/proxy_config.dart';
+import 'package:fus_inbox_v2/data/socks_bridge.dart';
 
 import 'package:test/test.dart';
 

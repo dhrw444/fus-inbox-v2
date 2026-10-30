@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:fus_inbox/platform/site_wipe.dart';
+import 'package:fus_inbox_v2/platform/site_wipe.dart';
 
 void main() {
   group('清站点数据的判定', () {
