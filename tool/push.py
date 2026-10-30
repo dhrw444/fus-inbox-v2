@@ -1,12 +1,36 @@
 #!/usr/bin/env python3
 """把当前目录推成一个 Git commit（走 GitHub API）。
 
-沙箱里的 git 对象库是坏的（`fatal: invalid mode for object creation: copy`），
+沙箱里的 git 对象库是坏的（`fatal: invalid mode for creation: copy`），
 所有推送都走 API。
 
 用法：
-    python3 tool/push.py "提交信息"
+    python3 tool/push.py "提交信息"           # 直接给字符串
+    python3 tool/push.py -f /tmp/msg.txt      # 从文件读（多行更稳）
+
+## 三条硬约束（都是踩过坑之后加的）
+
+**① 拿不到远端 ref 就停下，不许兜底。**
+
+原来那段「空仓库 → 垫一个初始 commit」的逻辑差点把历史搞乱：一次
+`Connection reset by peer` 让 `GET /git/ref/heads/main` 返回空，脚本
+当成「仓库是空的」，建了个 `初始化仓库` 提交并 PATCH 了 main。
+
+网络抖动和真空仓库从外面看起来一样，但后者几乎从不发生、前者经常发生。
+兜底分支会把一次网络故障变成一次历史改写。
+
+**② 本地删掉的文件，远端也要删。**
+
+GitHub 建 tree 时，`{'path': ..., 'sha': None}` 就是删除标记。
+原来只 add 不 delete，于是本地删了文件、远端永远留着 —— 一次推完
+本地 97 个文件、远端 142 个，多出 45 个幽灵。
+
+**③ 提交信息按字符串优先。**
+
+`sys.argv[1]` 原来被当成文件路径：传字符串进去它读不到文件，就静默
+退回 `'update'`，于是整条提交信息丢了。
 """
+
 import base64
 import json
 import os
@@ -17,13 +41,13 @@ REPO = 'dhrw444/fus-inbox-v2'
 BRANCH = 'main'
 TOKEN = os.environ['GITHUB_TOKEN']
 
-# 不推的目录：构建产物、缓存、旧代码。
+# 不推的目录：构建产物、缓存。
 SKIP_DIRS = {'.git', '.dart_tool', 'build', '.idea', 'windows/flutter/ephemeral'}
 SKIP_FILES = {'.DS_Store'}
 
 
 def api(method, path, body=None):
-    """调一次 API。返回解析后的 JSON。"""
+    """调一次 API。网络失败时抛异常，不返回空 dict。"""
     args = [
         'curl', '-sS', '--max-time', '120', '-X', method,
         '-H', 'Authorization: Bearer ' + TOKEN,
@@ -37,21 +61,20 @@ def api(method, path, body=None):
         args, input=json.dumps(body) if body is not None else None,
         capture_output=True, text=True,
     )
+    if r.returncode != 0:
+        raise RuntimeError('curl 失败(%d): %s' % (r.returncode, r.stderr.strip()[:200]))
     try:
         return json.loads(r.stdout)
     except Exception:
-        return {'_raw': r.stdout[:300], '_err': r.stderr[:200]}
+        raise RuntimeError('返回不是 JSON: %s' % r.stdout[:200])
 
 
 def collect():
-    """列出要推的文件（相对路径）。"""
+    """列出要推的文件（相对路径，排序）。"""
     out = []
     for root, dirs, files in os.walk('.'):
-        # 用 relpath 而不是 `lstrip('./')` —— 后者是**按字符集**剥离，
-        # 会把 `.dart_tool` 削成 `dart_tool`，于是跳过规则永远不命中。
-        # （这个坑我踩过：它静默失效，最后在推 `dart_tool/package_config.json`
-        #   时才炸出来。）
-        rel = os.path.relpath(root)
+        # 用 relpath 而不是 `lstrip('./')` —— 后者按**字符集**剥离，
+        # 会把 `.dart_tool` 削成 `dart_tool`，跳过规则永远不命中。
         dirs[:] = [
             d for d in dirs
             if os.path.relpath(os.path.join(root, d)) not in SKIP_DIRS
@@ -66,17 +89,18 @@ def collect():
     return sorted(out)
 
 
+def remote_paths(tree_sha):
+    """远端当前 tree 里的全部文件路径。"""
+    d = api('GET', '/repos/%s/git/trees/%s?recursive=1' % (REPO, tree_sha))
+    return {t['path'] for t in d.get('tree', []) if t['type'] == 'blob'}
+
+
 def make_blob(path):
     """把文件变成 blob sha。
 
-    **一律走 base64**，不再区分文本/二进制。
-
-    原来文本走 utf8 是因为「base64 多三分之一体积」，但那点体积换来的是
-    **一类静默失败**：`windows/flutter/CMakeLists.txt` 带 BOM、某些文件
-    带 CRLF/奇异字符时，utf8 那条路建 blob 会失败 —— 而失败发生在推送
-    中途，前面的 blob 已经建好了，重推要重来一遍。
-
-    统一 base64 就没有「哪些文件算文本」这个判断了，也就没有判断错的可能。
+    一律走 base64，不区分文本/二进制。原来文本走 utf8 是为了省三分之一体积，
+    但换来一类静默失败：带 BOM 或 CRLF 的文件建 blob 会失败，而失败发生在
+    推送中途 —— 前面的 blob 已建好，重推要重来一遍。
     """
     raw = open(path, 'rb').read()
     r = api('POST', '/repos/%s/git/blobs' % REPO,
@@ -86,52 +110,55 @@ def make_blob(path):
 
 
 def main():
-    # 提交信息从文件读 —— 多行中文经 shell 传参会撞上解析。
-    msg_file = sys.argv[1] if len(sys.argv) > 1 else None
-    message = (
-        open(msg_file, encoding='utf-8').read()
-        if msg_file and os.path.exists(msg_file) else 'update'
-    )
+    # 提交信息：-f 走文件，否则当字符串。字符串**直接就是信息**，不当路径试。
+    if len(sys.argv) > 1 and sys.argv[1] == '-f' and len(sys.argv) > 2:
+        message = open(sys.argv[2], encoding='utf-8').read()
+    elif len(sys.argv) > 1:
+        message = sys.argv[1]
+    else:
+        message = 'update'
 
     files = collect()
-    print('  文件数: %d' % len(files))
+    print('  本地文件数: %d' % len(files))
 
-    # 远端当前 HEAD（第一次推时仓库是空的）。
+    # ── 拿远端 HEAD。失败就停，不兜底 ──
     ref = api('GET', '/repos/%s/git/ref/heads/%s' % (REPO, BRANCH))
-    base_sha = ref.get('object', {}).get('sha') if 'object' in ref else None
+    if 'object' not in ref:
+        print('  ✗ 拿不到 %s 的 ref: %s' % (BRANCH, str(ref)[:200]))
+        print('  网络问题还是真空仓库？先重跑一次再判断。不自动兜底。')
+        return 1
+    base_sha = ref['object']['sha']
+    print('  远端 HEAD: %s' % base_sha[:12])
 
-    # **空仓库要先垫一个初始 commit。**
-    #
-    # GitHub 的 `POST /git/blobs` 在空仓库上直接回 409
-    # （`Git Repository is empty.`）—— 它需要仓库里至少有一个 commit
-    # 才能建对象。而 `PUT /contents/<path>` 恰好能做这件事：它会顺手
-    # 建出初始 commit 和默认分支。
-    if not base_sha:
-        print('  空仓库：先垫一个初始 commit')
-        seed = api('PUT', '/repos/%s/contents/README.md' % REPO, {
-            'message': '初始化仓库',
-            'content': base64.b64encode('# fus-inbox-v2\n'.encode()).decode(),
-        })
-        if 'commit' not in seed:
-            print('  ✗ 初始 commit 失败: %s' % str(seed)[:300])
-            return 1
-        ref = api('GET', '/repos/%s/git/ref/heads/%s' % (REPO, BRANCH))
-        base_sha = ref.get('object', {}).get('sha')
-        if not base_sha:
-            print('  ✗ 拿不到初始 commit')
-            return 1
+    base_commit = api('GET', '/repos/%s/git/commits/%s' % (REPO, base_sha))
+    base_tree = base_commit['tree']['sha']
+    remote = remote_paths(base_tree)
+    print('  远端文件数: %d' % len(remote))
 
-    parents = [base_sha]
-
+    # ── 建 tree：改动/新增带 blob，本地已删的带 sha=None ──
     tree = []
     for p in files:
         sha = make_blob(p)
         if not sha:
             print('  ✗ blob 失败: %s' % p)
             return 1
-        tree.append({'path': p, 'mode': '100755' if os.access(p, os.X_OK) else '100644',
-                     'type': 'blob', 'sha': sha})
-    print('  blob 完成')
+        tree.append({
+            'path': p,
+            'mode': '100755' if os.access(p, os.X_OK) else '100644',
+            'type': 'blob',
+            'sha': sha,
+        })
+    print('  blob 完成: %d 个' % len(files))
+
+    gone = sorted(remote - set(files))
+    for p in gone:
+        tree.append({'path': p, 'mode': '100644', 'type': 'blob', 'sha': None})
+    if gone:
+        print('  删除远端残留: %d 个' % len(gone))
+        for p in gone[:8]:
+            print('    - %s' % p)
+        if len(gone) > 8:
+            print('    ... 还有 %d 个' % (len(gone) - 8))
 
     t = api('POST', '/repos/%s/git/trees' % REPO, {'tree': tree})
     if 'sha' not in t:
@@ -139,19 +166,15 @@ def main():
         return 1
 
     c = api('POST', '/repos/%s/git/commits' % REPO,
-            {'message': message, 'tree': t['sha'], 'parents': parents})
+            {'message': message, 'tree': t['sha'], 'parents': [base_sha]})
     if 'sha' not in c:
         print('  ✗ 建 commit 失败: %s' % str(c)[:300])
         return 1
     print('  commit = %s' % c['sha'])
 
-    if base_sha:
-        r = api('PATCH', '/repos/%s/git/refs/heads/%s' % (REPO, BRANCH),
-                {'sha': c['sha'], 'force': False})
-    else:
-        r = api('POST', '/repos/%s/git/refs' % REPO,
-                {'ref': 'refs/heads/%s' % BRANCH, 'sha': c['sha']})
-    if 'object' not in r and 'ref' not in r:
+    r = api('PATCH', '/repos/%s/git/refs/heads/%s' % (REPO, BRANCH),
+            {'sha': c['sha'], 'force': False})
+    if 'object' not in r:
         print('  ✗ 更新 ref 失败: %s' % str(r)[:300])
         return 1
     print('  ✓ %s → %s' % (BRANCH, c['sha'][:12]))
