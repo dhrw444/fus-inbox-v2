@@ -20,3 +20,10 @@ android/app/release/
 *.jks
 *.keystore
 key.properties
+
+# flutter pub get 生成的插件清单。**每次 pub get 都会重写**，
+# 里面列的插件取决于当前 lock 文件，提交它等于给每个改依赖的人
+# 制造一次无意义的冲突。
+windows/flutter/generated_plugins.cmake
+windows/flutter/generated_plugin_registrant.cc
+windows/flutter/generated_plugin_registrant.h
