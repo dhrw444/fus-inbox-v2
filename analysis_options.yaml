@@ -53,6 +53,7 @@ analyzer:
     # 工具脚本不进 App，规则可以松一点。
     # 不排掉的话 CI 的 --fatal-infos 会把每一条 print 都当失败。
     - tool/**
+    - build/**
 
 linter:
   rules:

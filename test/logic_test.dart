@@ -18,27 +18,24 @@ library;
 
 import 'dart:math';
 
-import '../lib/core/code_extract.dart';
-import '../lib/core/sms_message.dart';
-import '../lib/core/user_agent.dart';
-import '../lib/data/frame.dart';
-import '../lib/data/number_entry.dart';
-import '../lib/data/proxy_config.dart';
-import '../lib/data/inbox_state.dart';
-import '../lib/data/inbox_store.dart';
-import '../lib/data/verify_round.dart';
-import '../lib/data/merge_frame.dart';
+import 'package:test/test.dart';
 
-int _pass = 0;
-int _fail = 0;
+import 'package:fus_inbox/core/code_extract.dart';
+import 'package:fus_inbox/core/sms_message.dart';
+import 'package:fus_inbox/core/user_agent.dart';
+import 'package:fus_inbox/data/frame.dart';
+import 'package:fus_inbox/data/number_entry.dart';
+import 'package:fus_inbox/data/proxy_config.dart';
+import 'package:fus_inbox/data/inbox_state.dart';
+import 'package:fus_inbox/data/inbox_store.dart';
+import 'package:fus_inbox/data/verify_round.dart';
+import 'package:fus_inbox/data/merge_frame.dart';
 
+/// 断言失败时 `package:test` 会打印 got/want 差异，并让进程退出非 0 ——
+/// 比原来只 print 一行 `FAIL` 可靠：原脚本的 `_fail` 只被打印，没有 exitCode，
+/// 所以 192 条断言全挂时 CI 依然是绿的。
 void _ok(String label, bool cond) {
-  if (cond) {
-    _pass++;
-  } else {
-    _fail++;
-    print('FAIL $label');
-  }
+  expect(cond, isTrue, reason: label);
 }
 
 void _eq(String label, Object? got, Object? want) {
@@ -49,17 +46,15 @@ SmsMessage _m(String id, {String text = 'body', String time = ''}) =>
     SmsMessage(id: id, text: text, time: time);
 
 void main() {
-  _testCodeExtract();
-  _testMerge();
-  _testState();
-  _testFrame();
-  _testVerify();
-  _testStore();
-  _testUserAgent();
-  _testProxy();
-  _testNumbers();
-  print('\n$_pass passed, $_fail failed');
-  if (_fail > 0) throw StateError('$_fail failed');
+  group('code_extract', () => test('code_extract', _testCodeExtract));
+  group('merge', () => test('merge', _testMerge));
+  group('inbox_state', () => test('inbox_state', _testState));
+  group('frame', () => test('frame', _testFrame));
+  group('verify', () => test('verify', _testVerify));
+  group('store', () => test('store', _testStore));
+  group('user_agent', () => test('user_agent', _testUserAgent));
+  group('proxy', () => test('proxy', _testProxy));
+  group('numbers', () => test('numbers', _testNumbers));
 }
 
 void _testCodeExtract() {
@@ -122,8 +117,8 @@ void _testMerge() {
   // ── 同 id 补字段，位置不变 ──
   {
     final r = mergeFrame(
-      current: [SmsMessage(id: 'a', text: '', code: '')],
-      incoming: [SmsMessage(id: 'a', text: '完整正文', code: '123456')],
+      current: [const SmsMessage(id: 'a', text: '')],
+      incoming: [const SmsMessage(id: 'a', text: '完整正文', code: '123456')],
       seenIds: {'a'},
       firstFrameDone: true,
     );
@@ -137,7 +132,7 @@ void _testMerge() {
   {
     final r = mergeFrame(
       current: const [],
-      incoming: [SmsMessage(id: '', text: 'x')],
+      incoming: [const SmsMessage(id: '', text: 'x')],
       seenIds: const {},
       firstFrameDone: false,
     );
@@ -247,8 +242,8 @@ void _testState() {
   // ── applyFrame：拿到消息 → ready + 清 hold + 清 error ──
   {
     const hold = SiteHold(kind: HoldKind.challenge, title: '', message: '');
-    final st = InboxState(
-      messages: const [],
+    const st = InboxState(
+      messages: [],
       phase: InboxPhase.waiting,
       error: '某个错误',
       hold: hold,
@@ -858,7 +853,7 @@ void _testNumbers() {
 
   // ── describeAge 用绝对时间重算 ──
   {
-    final now = DateTime.utc(2026, 10, 29, 21, 5, 0);
+    final now = DateTime.utc(2026, 10, 29, 21, 5);
     _eq(
       '分钟',
       NumberEntry(
@@ -872,7 +867,7 @@ void _testNumbers() {
       '小时',
       NumberEntry(
         digits: '1',
-        lastTextAt: DateTime.utc(2026, 10, 29, 19, 0, 0),
+        lastTextAt: DateTime.utc(2026, 10, 29, 19),
       ).describeAge(now),
       '2 小时前',
     );
@@ -880,7 +875,7 @@ void _testNumbers() {
       '天',
       NumberEntry(
         digits: '1',
-        lastTextAt: DateTime.utc(2026, 10, 27, 21, 0, 0),
+        lastTextAt: DateTime.utc(2026, 10, 27, 21),
       ).describeAge(now),
       '2 天前',
     );

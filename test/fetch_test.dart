@@ -8,25 +8,19 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import '../lib/data/number_entry.dart';
-import '../lib/data/number_fetch.dart';
+import 'package:fus_inbox/data/number_entry.dart';
+import 'package:fus_inbox/data/number_fetch.dart';
 
-int _pass = 0;
-int _fail = 0;
+import 'package:test/test.dart';
 
 void _ok(String name, bool cond) {
-  if (cond) {
-    _pass++;
-    print('  ok   $name');
-  } else {
-    _fail++;
-    print('  FAIL $name');
-  }
+  expect(cond, isTrue, reason: name);
 }
 
 void _eq(String name, Object? a, Object? b) {
-  _ok('$name ($a == $b)', a == b);
+  expect(a, b, reason: name);
 }
+
 
 /// 造一页假目录的 HTML，形状照抄真站点。
 String _fakePage(int page, {int total = 114, int count = 24}) {
@@ -56,9 +50,7 @@ String _fakePage(int page, {int total = 114, int count = 24}) {
 }
 
 /// 本地假站点。可以指定某几页返回错误。
-class _Site {
-  _Site._(this._server);
-
+class _Site._(this._server) {
   final ServerSocket _server;
 
   /// 页号 → 状态码。不在表里的页正常返回。
@@ -122,7 +114,9 @@ class _Site {
   Future<void> stop() => _server.close();
 }
 
-Future<void> main() async {
+void main() {
+  test('fetch', () async {
+
   // ── ① 出口没起来 → 必须失败，不能悄悄直连 ──
   {
     final site = await _Site.start();
@@ -243,9 +237,9 @@ Future<void> main() async {
     await site.stop();
   }
 
-  print('\n  $_pass passed, $_fail failed');
-  exit(_fail == 0 ? 0 : 1);
+  });
 }
+
 
 /// 出口为空那条错是否被标成不可重试。
 Future<bool> _isRetryable(NumberFetcher f, _Site site) async {

@@ -1,21 +1,16 @@
-import '../lib/data/enums.dart';
+import 'package:fus_inbox/data/enums.dart';
 
-int _pass = 0;
-int _fail = 0;
+import 'package:test/test.dart';
 
 void _eq(String what, Object? got, Object? want) {
-  if (got == want) {
-    _pass++;
-    print('  ok   $what');
-  } else {
-    _fail++;
-    print('  FAIL $what (got=$got want=$want)');
-  }
+  expect(got, want, reason: what);
 }
 
-void _ok(String what, bool cond) => _eq(what, cond, true);
+void _ok(String what, bool cond) => expect(cond, isTrue, reason: what);
 
 void main() {
+  test('enums', () async {
+
   // ── 明暗解析：三条路径 ──
   {
     _eq(
@@ -65,6 +60,6 @@ void main() {
     _ok('label 互不相同', labels.length == NumberTab.values.length);
   }
 
-  print('\n  $_pass passed, $_fail failed');
-  if (_fail != 0) throw StateError('$_fail 项失败');
+  });
 }
+

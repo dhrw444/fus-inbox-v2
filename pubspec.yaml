@@ -37,6 +37,9 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
 
+  # 纯 Dart 逻辑测试用官方 test 包（`flutter_test` 只覆盖 widget 测试）。
+  test: ^1.25.0
+
   # lint 规则集，`analysis_options.yaml` 里 include 的就是它。
   flutter_lints: ^6.0.0
 

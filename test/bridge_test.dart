@@ -10,24 +10,17 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import '../lib/data/proxy_config.dart';
-import '../lib/data/socks_bridge.dart';
+import 'package:fus_inbox/data/proxy_config.dart';
+import 'package:fus_inbox/data/socks_bridge.dart';
 
-int _pass = 0;
-int _fail = 0;
+import 'package:test/test.dart';
 
 void _ok(String what, bool cond) {
-  if (cond) {
-    _pass++;
-    print('  ok   $what');
-  } else {
-    _fail++;
-    print('  FAIL $what');
-  }
+  expect(cond, isTrue, reason: what);
 }
 
 /// 假上游记下来的请求。
-class _Seen {
+class _Seen() {
   String host = '';
   int port = 0;
   String user = '';
@@ -38,14 +31,12 @@ class _Seen {
 ///
 /// [authOk] 为 false 时故意回「认证失败」；[connectRep] 非 0 时故意回
 /// 一个失败应答码。这两个是用来测桥的错误路径的。
-class _FakeSocks {
-  _FakeSocks({
+class _FakeSocks({
     this.expectUser = 'u',
     this.expectPass = 'p',
     this.authOk = true,
     this.connectRep = 0,
-  });
-
+  }) {
   final String expectUser;
   final String expectPass;
   final bool authOk;
@@ -73,8 +64,8 @@ class _FakeSocks {
 /// 一遍」写的，结果进了认证阶段后首字节是 `0x01` 而不是 `0x05`，被开头
 /// 那句「不是 SOCKS5 就返回」挡住 —— 流程永远推进不下去，测试直接卡死。
 /// 状态机的阶段必须跟着流程走，不能靠数据长什么样去猜走到哪了。
-class _Conn {
-  _Conn(this.fake, this.socket) {
+class _Conn(this.fake, this.socket) {
+  this {
     socket.listen(_onData, onDone: () {}, onError: (_) {}, cancelOnError: true);
   }
 
@@ -206,8 +197,8 @@ class _Conn {
 }
 
 /// 客户端一侧的读取器，模拟 WebView 的行为。
-class _Peer {
-  _Peer(this.socket) {
+class _Peer(this.socket) {
+  this {
     socket.listen(
       (d) {
         _buf.addAll(d);
@@ -279,7 +270,9 @@ Future<_Peer> _connectBridge(int port) async {
   return _Peer(s);
 }
 
-Future<void> main() async {
+void main() {
+  test('bridge', () async {
+
   // ── ① 端到端：握手 → 认证 → CONNECT → 隧道 ──
   {
     final up = _FakeSocks();
@@ -319,8 +312,12 @@ Future<void> main() async {
   }
 
   // ── ② 凭据不对 → 502，不是挂起 ──
+  //
+  // 上游期望 `u` / `p`，桥配的是 `u` / `错`。显式传期望值而不是靠默认 ——
+  // 默认值一旦改动，这条测试就会静默失效（lint 的 `unused_element_parameter`
+  // 就是在提醒这件事：这两个参数从没被任何测试用过）。
   {
-    final up = _FakeSocks();
+    final up = _FakeSocks(expectUser: 'alice', expectPass: 'secret');
     await up.start();
     final bridge = SocksBridge();
     final port = await bridge.start(
@@ -328,7 +325,7 @@ Future<void> main() async {
         scheme: ProxyScheme.socks5,
         host: '127.0.0.1',
         port: up.port,
-        user: 'u',
+        user: 'alice',
         password: '错',
       ),
     );
@@ -359,6 +356,36 @@ Future<void> main() async {
     peer.send('CONNECT blocked.example:443 HTTP/1.1\r\n\r\n');
     _ok('上游拒绝回 502', (await peer.readHead()).startsWith('HTTP/1.1 502'));
     _ok('原因含「连接被拒」', bridge.lastError.contains('连接被拒'));
+    peer.socket.destroy();
+    await bridge.stop();
+    await up.stop();
+  }
+
+  // ── ③b 上游拒绝**认证**（不是 CONNECT）→ 502，原因不能跟「连接被拒」混 ──
+  //
+  // 这条是 lint 帮我发现的缺口：假上游有 `authOk` 这个开关，但从来没被
+  // 传过值 —— 也就是「认证被拒」这条路径压根没测。用户配错账号密码时
+  // 走的就是这条，报错信息必须能指向「凭据」而不是「连不上」。
+  {
+    final up = _FakeSocks(authOk: false);
+    await up.start();
+    final bridge = SocksBridge();
+    final port = await bridge.start(
+      upstream: ProxyConfig(
+        scheme: ProxyScheme.socks5,
+        host: '127.0.0.1',
+        port: up.port,
+        user: 'u',
+        password: 'p',
+      ),
+    );
+    final peer = await _connectBridge(port);
+    peer.send('CONNECT blocked.example:443 HTTP/1.1\r\n\r\n');
+    _ok('上游拒绝认证也回 502', (await peer.readHead()).startsWith('HTTP/1.1 502'));
+    _ok(
+      '原因说的是认证，不是连接被拒',
+      bridge.lastError.contains('认证') && !bridge.lastError.contains('连接被拒'),
+    );
     peer.socket.destroy();
     await bridge.stop();
     await up.stop();
@@ -412,7 +439,6 @@ Future<void> main() async {
     // 开放代理，同一个 wifi 下谁都能拿它当跳板。
     final external = <String>[];
     for (final ni in await NetworkInterface.list(
-      includeLoopback: false,
       type: InternetAddressType.IPv4,
     )) {
       for (final a in ni.addresses) {
@@ -420,7 +446,7 @@ Future<void> main() async {
       }
     }
     if (external.isEmpty) {
-      print('  skip 没有非回环地址，这条判不了');
+      markTestSkipped('没有非回环地址，这条判不了');
     } else {
       var reachable = false;
       for (final ip in external) {
@@ -566,17 +592,15 @@ Future<void> main() async {
     await bridge.stop();
   }
 
-  print('\n  $_pass passed, $_fail failed');
-  exit(_fail == 0 ? 0 : 1);
+  });
 }
+
 
 /// 一个只会把收到的字节原样送回的 TCP 服务，用来验直连。
 ///
 /// 直连路径没有 SOCKS5 握手，所以不能用 `_FakeSocks` 顶替 —— 需要的是
 /// 一个「连上就是隧道」的裸服务端。
-class _EchoServer {
-  _EchoServer._(this._server);
-
+class _EchoServer._(this._server) {
   final ServerSocket _server;
   int connections = 0;
 

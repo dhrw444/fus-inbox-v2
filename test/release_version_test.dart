@@ -1,36 +1,24 @@
-import 'dart:io';
 
 import '../tool/set_release_version.dart';
 
-int _pass = 0;
-int _fail = 0;
+import 'package:test/test.dart';
 
 void _ok(String name, bool cond, [String? detail]) {
-  if (cond) {
-    _pass++;
-    print('  ok   $name${detail == null ? '' : ' ($detail)'}');
-  } else {
-    _fail++;
-    print('  FAIL $name${detail == null ? '' : ' ($detail)'}');
-  }
+  expect(cond, isTrue, reason: detail == null ? name : '$name ($detail)');
 }
 
-void _eq(String name, Object? got, Object? want) =>
-    _ok(name, got == want, '$got == $want');
+void _eq(String name, Object? got, Object? want) {
+  expect(got, want, reason: name);
+}
 
 /// 断言抛了 FormatException。
 void _rejects(String name, void Function() fn) {
-  try {
-    fn();
-    _fail++;
-    print('  FAIL $name（没抛）');
-  } on FormatException {
-    _pass++;
-    print('  ok   $name');
-  }
+  expect(fn, throwsFormatException, reason: name);
 }
 
 void main() {
+  test('release_version', () async {
+
   // ── 正常解析 ──
   {
     final v = parseReleaseVersion('1.2.3');
@@ -123,6 +111,6 @@ environment:
     _ok('二次调用稳定', c == a);
   }
 
-  print('\n  $_pass passed, $_fail failed');
-  exit(_fail == 0 ? 0 : 1);
+  });
 }
+
