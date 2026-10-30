@@ -28,40 +28,26 @@ jobs:
       - name: 装依赖
         run: flutter pub get
 
-      # 纯逻辑测试。**这一条最有价值** —— 断言覆盖的正是旧代码里
-      # 那些「只能靠读代码看着对」的判断。
-      - name: 纯逻辑测试
-        run: dart run tool/rewrite_test.dart
-
-      # 代理桥的端到端测试。起一个假 SOCKS5 上游，让桥去连它，
-      # 验握手字节、认证、隧道、错误码 —— 这些在真机上只表现为
-      # 「页面打不开」，没有别的线索，所以必须在本地锁住。
-      - name: 代理桥测试
-        run: dart run tool/bridge_test.dart
-
-      # 目录抓取：起一个本地假站点真跑 HTTP。重点验「出口没起来必须失败
-      # 而不是悄悄直连」—— 那条退化了就是静默泄漏真实 IP，界面上看不出来。
-      - name: 目录抓取测试
-        run: dart run tool/fetch_test.dart
-
-      # 版本号校验就是发版门禁：它放过畸形版本号，整条出包流水线就带着
-      # 坏版本号跑。而坏版本号不会让构建失败，只会让装上去的包看起来是新的、
-      # 实际是旧的（versionCode 没涨，安卓直接不让覆盖安装）。
-      - name: 版本号校验测试
-        run: dart run tool/release_version_test.dart
-
-      # 枚举的 label 是界面文案，`resolve` 是明暗判定的唯一入口。
-      # 这两样都不依赖 Flutter，所以能在沙箱和 CI 上真跑。
-      - name: 枚举测试
-        run: dart run tool/enums_test.dart
+      # 全部测试走官方 `flutter test`。
+      #
+      # 之前是 5 个 `dart run tool/xxx_test.dart`，每个自带一套断言框架。
+      # 问题在于那套框架**失败时不会让进程退出非 0** —— 192 条断言全挂，
+      # CI 依然是绿的。而且它跑在残的 SDK 上，连语法错都不报。
+      #
+      # 现在断言用 `package:test` 的 `expect`，失败即非 0；测试文件在 `test/`，
+      # `flutter test` 自动发现。
+      - name: 测试
+        run: flutter test
 
       # 抓取脚本的语法。JS 出错不会让 Dart 编译失败，只会在真机上
       # 静默什么都不做 —— 所以必须单独查。
       - name: JS 语法
         run: node --check assets/scanner.js
 
+      # `--fatal-infos` 把 info 也当失败。这一条是唯一能看见 lint 的地方：
+      # 沙箱里的 analyzer 曾经因为 sky_engine 是空壳而静默报「无问题」。
       - name: 类型检查
         run: flutter analyze --fatal-infos
 
       - name: 格式
-        run: dart format --output=none --set-exit-if-changed lib tool
+        run: dart format --output=none --set-exit-if-changed lib test tool

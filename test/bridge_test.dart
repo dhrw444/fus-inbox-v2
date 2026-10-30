@@ -32,11 +32,11 @@ class _Seen() {
 /// [authOk] 为 false 时故意回「认证失败」；[connectRep] 非 0 时故意回
 /// 一个失败应答码。这两个是用来测桥的错误路径的。
 class _FakeSocks({
-    this.expectUser = 'u',
-    this.expectPass = 'p',
-    this.authOk = true,
-    this.connectRep = 0,
-  }) {
+  this.expectUser = 'u',
+  this.expectPass = 'p',
+  this.authOk = true,
+  this.connectRep = 0,
+}) {
   final String expectUser;
   final String expectPass;
   final bool authOk;
@@ -272,329 +272,328 @@ Future<_Peer> _connectBridge(int port) async {
 
 void main() {
   test('bridge', () async {
+    // ── ① 端到端：握手 → 认证 → CONNECT → 隧道 ──
+    {
+      final up = _FakeSocks();
+      await up.start();
+      final bridge = SocksBridge();
+      final port = await bridge.start(
+        upstream: ProxyConfig(
+          scheme: ProxyScheme.socks5,
+          host: '127.0.0.1',
+          port: up.port,
+          user: 'u',
+          password: 'p',
+        ),
+      );
 
-  // ── ① 端到端：握手 → 认证 → CONNECT → 隧道 ──
-  {
-    final up = _FakeSocks();
-    await up.start();
-    final bridge = SocksBridge();
-    final port = await bridge.start(
-      upstream: ProxyConfig(
-        scheme: ProxyScheme.socks5,
-        host: '127.0.0.1',
-        port: up.port,
-        user: 'u',
-        password: 'p',
-      ),
-    );
+      final peer = await _connectBridge(port);
+      peer.send(
+        'CONNECT example.com:443 HTTP/1.1\r\nHost: example.com\r\n\r\n',
+      );
+      final head = await peer.readHead();
+      _ok('CONNECT 回 200', head.startsWith('HTTP/1.1 200'));
+      _ok('上游收到的目标对', up.seen.host == 'example.com' && up.seen.port == 443);
+      _ok('上游收到凭据', up.seen.user == 'u' && up.seen.pass == 'p');
+      _ok('桥计了连接数', bridge.connections == 1);
 
-    final peer = await _connectBridge(port);
-    peer.send('CONNECT example.com:443 HTTP/1.1\r\nHost: example.com\r\n\r\n');
-    final head = await peer.readHead();
-    _ok('CONNECT 回 200', head.startsWith('HTTP/1.1 200'));
-    _ok('上游收到的目标对', up.seen.host == 'example.com' && up.seen.port == 443);
-    _ok('上游收到凭据', up.seen.user == 'u' && up.seen.pass == 'p');
-    _ok('桥计了连接数', bridge.connections == 1);
+      // 隧道数据：发什么回来什么。
+      const msg = 'tunnel-hello';
+      peer.send(msg);
+      _ok('隧道双向通', utf8.decode(await peer.take(msg.length)) == msg);
 
-    // 隧道数据：发什么回来什么。
-    const msg = 'tunnel-hello';
-    peer.send(msg);
-    _ok('隧道双向通', utf8.decode(await peer.take(msg.length)) == msg);
+      // 大一点的数据，确认跨多个包也不截断。
+      final big = 'x' * 20000;
+      peer.send(big);
+      _ok('20KB 不截断', utf8.decode(await peer.take(20000)) == big);
 
-    // 大一点的数据，确认跨多个包也不截断。
-    final big = 'x' * 20000;
-    peer.send(big);
-    _ok('20KB 不截断', utf8.decode(await peer.take(20000)) == big);
-
-    peer.socket.destroy();
-    await bridge.stop();
-    await up.stop();
-  }
-
-  // ── ② 凭据不对 → 502，不是挂起 ──
-  //
-  // 上游期望 `u` / `p`，桥配的是 `u` / `错`。显式传期望值而不是靠默认 ——
-  // 默认值一旦改动，这条测试就会静默失效（lint 的 `unused_element_parameter`
-  // 就是在提醒这件事：这两个参数从没被任何测试用过）。
-  {
-    final up = _FakeSocks(expectUser: 'alice', expectPass: 'secret');
-    await up.start();
-    final bridge = SocksBridge();
-    final port = await bridge.start(
-      upstream: ProxyConfig(
-        scheme: ProxyScheme.socks5,
-        host: '127.0.0.1',
-        port: up.port,
-        user: 'alice',
-        password: '错',
-      ),
-    );
-    final peer = await _connectBridge(port);
-    peer.send('CONNECT example.com:443 HTTP/1.1\r\n\r\n');
-    _ok('认证失败回 502', (await peer.readHead()).startsWith('HTTP/1.1 502'));
-    _ok('记下了失败原因', bridge.lastError.contains('认证'));
-    peer.socket.destroy();
-    await bridge.stop();
-    await up.stop();
-  }
-
-  // ── ③ 上游拒绝 CONNECT → 502，原因说得清 ──
-  {
-    final up = _FakeSocks(connectRep: 0x05);
-    await up.start();
-    final bridge = SocksBridge();
-    final port = await bridge.start(
-      upstream: ProxyConfig(
-        scheme: ProxyScheme.socks5,
-        host: '127.0.0.1',
-        port: up.port,
-        user: 'u',
-        password: 'p',
-      ),
-    );
-    final peer = await _connectBridge(port);
-    peer.send('CONNECT blocked.example:443 HTTP/1.1\r\n\r\n');
-    _ok('上游拒绝回 502', (await peer.readHead()).startsWith('HTTP/1.1 502'));
-    _ok('原因含「连接被拒」', bridge.lastError.contains('连接被拒'));
-    peer.socket.destroy();
-    await bridge.stop();
-    await up.stop();
-  }
-
-  // ── ③b 上游拒绝**认证**（不是 CONNECT）→ 502，原因不能跟「连接被拒」混 ──
-  //
-  // 这条是 lint 帮我发现的缺口：假上游有 `authOk` 这个开关，但从来没被
-  // 传过值 —— 也就是「认证被拒」这条路径压根没测。用户配错账号密码时
-  // 走的就是这条，报错信息必须能指向「凭据」而不是「连不上」。
-  {
-    final up = _FakeSocks(authOk: false);
-    await up.start();
-    final bridge = SocksBridge();
-    final port = await bridge.start(
-      upstream: ProxyConfig(
-        scheme: ProxyScheme.socks5,
-        host: '127.0.0.1',
-        port: up.port,
-        user: 'u',
-        password: 'p',
-      ),
-    );
-    final peer = await _connectBridge(port);
-    peer.send('CONNECT blocked.example:443 HTTP/1.1\r\n\r\n');
-    _ok('上游拒绝认证也回 502', (await peer.readHead()).startsWith('HTTP/1.1 502'));
-    _ok(
-      '原因说的是认证，不是连接被拒',
-      bridge.lastError.contains('认证') && !bridge.lastError.contains('连接被拒'),
-    );
-    peer.socket.destroy();
-    await bridge.stop();
-    await up.stop();
-  }
-
-  // ── ④ 请求行不完整 → 400，不是静默挂断 ──
-  {
-    final up = _FakeSocks();
-    await up.start();
-    final bridge = SocksBridge();
-    final port = await bridge.start(
-      upstream: ProxyConfig(
-        scheme: ProxyScheme.socks5,
-        host: '127.0.0.1',
-        port: up.port,
-        user: 'u',
-        password: 'p',
-      ),
-    );
-    final peer = await _connectBridge(port);
-    peer.send('GARBAGE\r\n\r\n');
-    _ok('坏请求回 400', (await peer.readHead()).startsWith('HTTP/1.1 400'));
-    peer.socket.destroy();
-    await bridge.stop();
-    await up.stop();
-  }
-
-  // ── ⑤ 只绑回环；stop 之后真的关掉 ──
-  {
-    final up = _FakeSocks();
-    await up.start();
-    final bridge = SocksBridge();
-    final port = await bridge.start(
-      upstream: ProxyConfig(
-        scheme: ProxyScheme.socks5,
-        host: '127.0.0.1',
-        port: up.port,
-        user: 'u',
-        password: 'p',
-      ),
-    );
-    _ok('端口不为 0', port > 0);
-
-    final p1 = await _connectBridge(port);
-    p1.send('CONNECT a.example:443 HTTP/1.1\r\n\r\n');
-    _ok('回环连得上', (await p1.readHead()).startsWith('HTTP/1.1 200'));
-    p1.socket.destroy();
-
-    // 真正的断言：拿本机的**非回环**地址去连，必须连不上。
-    // 连得上就说明桥绑成了 0.0.0.0 —— 那就成了一个敞在局域网里的
-    // 开放代理，同一个 wifi 下谁都能拿它当跳板。
-    final external = <String>[];
-    for (final ni in await NetworkInterface.list(
-      type: InternetAddressType.IPv4,
-    )) {
-      for (final a in ni.addresses) {
-        external.add(a.address);
-      }
+      peer.socket.destroy();
+      await bridge.stop();
+      await up.stop();
     }
-    if (external.isEmpty) {
-      markTestSkipped('没有非回环地址，这条判不了');
-    } else {
-      var reachable = false;
-      for (final ip in external) {
-        try {
-          final s = await Socket.connect(
-            ip,
-            port,
-            timeout: const Duration(seconds: 2),
-          );
-          s.destroy();
-          reachable = true;
-        } catch (_) {
-          // 连不上 = 正确。
+
+    // ── ② 凭据不对 → 502，不是挂起 ──
+    //
+    // 上游期望 `u` / `p`，桥配的是 `u` / `错`。显式传期望值而不是靠默认 ——
+    // 默认值一旦改动，这条测试就会静默失效（lint 的 `unused_element_parameter`
+    // 就是在提醒这件事：这两个参数从没被任何测试用过）。
+    {
+      final up = _FakeSocks(expectUser: 'alice', expectPass: 'secret');
+      await up.start();
+      final bridge = SocksBridge();
+      final port = await bridge.start(
+        upstream: ProxyConfig(
+          scheme: ProxyScheme.socks5,
+          host: '127.0.0.1',
+          port: up.port,
+          user: 'alice',
+          password: '错',
+        ),
+      );
+      final peer = await _connectBridge(port);
+      peer.send('CONNECT example.com:443 HTTP/1.1\r\n\r\n');
+      _ok('认证失败回 502', (await peer.readHead()).startsWith('HTTP/1.1 502'));
+      _ok('记下了失败原因', bridge.lastError.contains('认证'));
+      peer.socket.destroy();
+      await bridge.stop();
+      await up.stop();
+    }
+
+    // ── ③ 上游拒绝 CONNECT → 502，原因说得清 ──
+    {
+      final up = _FakeSocks(connectRep: 0x05);
+      await up.start();
+      final bridge = SocksBridge();
+      final port = await bridge.start(
+        upstream: ProxyConfig(
+          scheme: ProxyScheme.socks5,
+          host: '127.0.0.1',
+          port: up.port,
+          user: 'u',
+          password: 'p',
+        ),
+      );
+      final peer = await _connectBridge(port);
+      peer.send('CONNECT blocked.example:443 HTTP/1.1\r\n\r\n');
+      _ok('上游拒绝回 502', (await peer.readHead()).startsWith('HTTP/1.1 502'));
+      _ok('原因含「连接被拒」', bridge.lastError.contains('连接被拒'));
+      peer.socket.destroy();
+      await bridge.stop();
+      await up.stop();
+    }
+
+    // ── ③b 上游拒绝**认证**（不是 CONNECT）→ 502，原因不能跟「连接被拒」混 ──
+    //
+    // 这条是 lint 帮我发现的缺口：假上游有 `authOk` 这个开关，但从来没被
+    // 传过值 —— 也就是「认证被拒」这条路径压根没测。用户配错账号密码时
+    // 走的就是这条，报错信息必须能指向「凭据」而不是「连不上」。
+    {
+      final up = _FakeSocks(authOk: false);
+      await up.start();
+      final bridge = SocksBridge();
+      final port = await bridge.start(
+        upstream: ProxyConfig(
+          scheme: ProxyScheme.socks5,
+          host: '127.0.0.1',
+          port: up.port,
+          user: 'u',
+          password: 'p',
+        ),
+      );
+      final peer = await _connectBridge(port);
+      peer.send('CONNECT blocked.example:443 HTTP/1.1\r\n\r\n');
+      _ok('上游拒绝认证也回 502', (await peer.readHead()).startsWith('HTTP/1.1 502'));
+      _ok(
+        '原因说的是认证，不是连接被拒',
+        bridge.lastError.contains('认证') && !bridge.lastError.contains('连接被拒'),
+      );
+      peer.socket.destroy();
+      await bridge.stop();
+      await up.stop();
+    }
+
+    // ── ④ 请求行不完整 → 400，不是静默挂断 ──
+    {
+      final up = _FakeSocks();
+      await up.start();
+      final bridge = SocksBridge();
+      final port = await bridge.start(
+        upstream: ProxyConfig(
+          scheme: ProxyScheme.socks5,
+          host: '127.0.0.1',
+          port: up.port,
+          user: 'u',
+          password: 'p',
+        ),
+      );
+      final peer = await _connectBridge(port);
+      peer.send('GARBAGE\r\n\r\n');
+      _ok('坏请求回 400', (await peer.readHead()).startsWith('HTTP/1.1 400'));
+      peer.socket.destroy();
+      await bridge.stop();
+      await up.stop();
+    }
+
+    // ── ⑤ 只绑回环；stop 之后真的关掉 ──
+    {
+      final up = _FakeSocks();
+      await up.start();
+      final bridge = SocksBridge();
+      final port = await bridge.start(
+        upstream: ProxyConfig(
+          scheme: ProxyScheme.socks5,
+          host: '127.0.0.1',
+          port: up.port,
+          user: 'u',
+          password: 'p',
+        ),
+      );
+      _ok('端口不为 0', port > 0);
+
+      final p1 = await _connectBridge(port);
+      p1.send('CONNECT a.example:443 HTTP/1.1\r\n\r\n');
+      _ok('回环连得上', (await p1.readHead()).startsWith('HTTP/1.1 200'));
+      p1.socket.destroy();
+
+      // 真正的断言：拿本机的**非回环**地址去连，必须连不上。
+      // 连得上就说明桥绑成了 0.0.0.0 —— 那就成了一个敞在局域网里的
+      // 开放代理，同一个 wifi 下谁都能拿它当跳板。
+      final external = <String>[];
+      for (final ni in await NetworkInterface.list(
+        type: InternetAddressType.IPv4,
+      )) {
+        for (final a in ni.addresses) {
+          external.add(a.address);
         }
       }
-      _ok('外部地址连不上（没绑 0.0.0.0）', !reachable);
+      if (external.isEmpty) {
+        markTestSkipped('没有非回环地址，这条判不了');
+      } else {
+        var reachable = false;
+        for (final ip in external) {
+          try {
+            final s = await Socket.connect(
+              ip,
+              port,
+              timeout: const Duration(seconds: 2),
+            );
+            s.destroy();
+            reachable = true;
+          } catch (_) {
+            // 连不上 = 正确。
+          }
+        }
+        _ok('外部地址连不上（没绑 0.0.0.0）', !reachable);
+      }
+
+      await bridge.stop();
+      _ok('stop 后 isRunning 为假', !bridge.isRunning);
+      _ok('stop 后 port 归 0', bridge.port == 0);
+
+      var refused = false;
+      try {
+        final s = await Socket.connect(
+          '127.0.0.1',
+          port,
+          timeout: const Duration(seconds: 2),
+        );
+        s.destroy();
+      } catch (_) {
+        refused = true;
+      }
+      _ok('stop 后连不上', refused);
+
+      await up.stop();
     }
 
-    await bridge.stop();
-    _ok('stop 后 isRunning 为假', !bridge.isRunning);
-    _ok('stop 后 port 归 0', bridge.port == 0);
-
-    var refused = false;
-    try {
-      final s = await Socket.connect(
-        '127.0.0.1',
-        port,
-        timeout: const Duration(seconds: 2),
+    // ── ⑥ 两条并发连接互不干扰 ──
+    {
+      final up = _FakeSocks();
+      await up.start();
+      final bridge = SocksBridge();
+      final port = await bridge.start(
+        upstream: ProxyConfig(
+          scheme: ProxyScheme.socks5,
+          host: '127.0.0.1',
+          port: up.port,
+          user: 'u',
+          password: 'p',
+        ),
       );
-      s.destroy();
-    } catch (_) {
-      refused = true;
+      final a = await _connectBridge(port);
+      final b = await _connectBridge(port);
+      a.send('CONNECT a.example:443 HTTP/1.1\r\n\r\n');
+      b.send('CONNECT b.example:443 HTTP/1.1\r\n\r\n');
+      _ok('A 拿到 200', (await a.readHead()).startsWith('HTTP/1.1 200'));
+      _ok('B 拿到 200', (await b.readHead()).startsWith('HTTP/1.1 200'));
+      a.send('AAA');
+      b.send('BBB');
+      _ok('A 的数据是 A 的', utf8.decode(await a.take(3)) == 'AAA');
+      _ok('B 的数据是 B 的', utf8.decode(await b.take(3)) == 'BBB');
+      _ok('计了两条', bridge.connections == 2);
+      a.socket.destroy();
+      b.socket.destroy();
+      await bridge.stop();
+      await up.stop();
     }
-    _ok('stop 后连不上', refused);
 
-    await up.stop();
-  }
+    // ── ⑦ 没有出口时走直连，而不是拒绝服务 ──
+    {
+      final echo = await _EchoServer.start();
+      final bridge = SocksBridge();
+      final port = await bridge.start(); // upstream 缺省 null
+      final peer = await _connectBridge(port);
+      peer.send('CONNECT 127.0.0.1:${echo.port} HTTP/1.1\r\n\r\n');
+      _ok('直连也回 200', (await peer.readHead()).startsWith('HTTP/1.1 200'));
+      peer.send('direct');
+      _ok('直连隧道通', utf8.decode(await peer.take(6)) == 'direct');
+      _ok('直连确实到了目标', echo.connections == 1);
+      peer.socket.destroy();
+      await bridge.stop();
+      await echo.stop();
+    }
 
-  // ── ⑥ 两条并发连接互不干扰 ──
-  {
-    final up = _FakeSocks();
-    await up.start();
-    final bridge = SocksBridge();
-    final port = await bridge.start(
-      upstream: ProxyConfig(
-        scheme: ProxyScheme.socks5,
-        host: '127.0.0.1',
-        port: up.port,
-        user: 'u',
-        password: 'p',
-      ),
-    );
-    final a = await _connectBridge(port);
-    final b = await _connectBridge(port);
-    a.send('CONNECT a.example:443 HTTP/1.1\r\n\r\n');
-    b.send('CONNECT b.example:443 HTTP/1.1\r\n\r\n');
-    _ok('A 拿到 200', (await a.readHead()).startsWith('HTTP/1.1 200'));
-    _ok('B 拿到 200', (await b.readHead()).startsWith('HTTP/1.1 200'));
-    a.send('AAA');
-    b.send('BBB');
-    _ok('A 的数据是 A 的', utf8.decode(await a.take(3)) == 'AAA');
-    _ok('B 的数据是 B 的', utf8.decode(await b.take(3)) == 'BBB');
-    _ok('计了两条', bridge.connections == 2);
-    a.socket.destroy();
-    b.socket.destroy();
-    await bridge.stop();
-    await up.stop();
-  }
+    // ── ⑧ 换出口只影响新连接，不掐断在传的 ──
+    {
+      final a = _FakeSocks();
+      await a.start();
+      final echo = await _EchoServer.start();
+      final bridge = SocksBridge();
+      final port = await bridge.start(
+        upstream: ProxyConfig(
+          scheme: ProxyScheme.socks5,
+          host: '127.0.0.1',
+          port: a.port,
+          user: 'u',
+          password: 'p',
+        ),
+      );
 
-  // ── ⑦ 没有出口时走直连，而不是拒绝服务 ──
-  {
-    final echo = await _EchoServer.start();
-    final bridge = SocksBridge();
-    final port = await bridge.start(); // upstream 缺省 null
-    final peer = await _connectBridge(port);
-    peer.send('CONNECT 127.0.0.1:${echo.port} HTTP/1.1\r\n\r\n');
-    _ok('直连也回 200', (await peer.readHead()).startsWith('HTTP/1.1 200'));
-    peer.send('direct');
-    _ok('直连隧道通', utf8.decode(await peer.take(6)) == 'direct');
-    _ok('直连确实到了目标', echo.connections == 1);
-    peer.socket.destroy();
-    await bridge.stop();
-    await echo.stop();
-  }
+      final old = await _connectBridge(port);
+      old.send('CONNECT 1.example:443 HTTP/1.1\r\n\r\n');
+      _ok('换之前走上游', (await old.readHead()).startsWith('HTTP/1.1 200'));
+      old.send('still');
+      _ok('换之前数据通', utf8.decode(await old.take(5)) == 'still');
 
-  // ── ⑧ 换出口只影响新连接，不掐断在传的 ──
-  {
-    final a = _FakeSocks();
-    await a.start();
-    final echo = await _EchoServer.start();
-    final bridge = SocksBridge();
-    final port = await bridge.start(
-      upstream: ProxyConfig(
-        scheme: ProxyScheme.socks5,
-        host: '127.0.0.1',
-        port: a.port,
-        user: 'u',
-        password: 'p',
-      ),
-    );
+      // 热切换成直连。
+      bridge.setUpstream(null);
+      _ok('记了一次切换', bridge.upstreamSwitches == 1);
+      bridge.setUpstream(null);
+      _ok('同一条出口重复设不算切换', bridge.upstreamSwitches == 1);
 
-    final old = await _connectBridge(port);
-    old.send('CONNECT 1.example:443 HTTP/1.1\r\n\r\n');
-    _ok('换之前走上游', (await old.readHead()).startsWith('HTTP/1.1 200'));
-    old.send('still');
-    _ok('换之前数据通', utf8.decode(await old.take(5)) == 'still');
+      // 老连接还在，数据照样能走 —— 这是「不掐断在传的」的判据。
+      old.send('alive');
+      _ok('老连接没被掐断', utf8.decode(await old.take(5)) == 'alive');
 
-    // 热切换成直连。
-    bridge.setUpstream(null);
-    _ok('记了一次切换', bridge.upstreamSwitches == 1);
-    bridge.setUpstream(null);
-    _ok('同一条出口重复设不算切换', bridge.upstreamSwitches == 1);
+      // 新连接走直连。
+      final fresh = await _connectBridge(port);
+      fresh.send('CONNECT 127.0.0.1:${echo.port} HTTP/1.1\r\n\r\n');
+      _ok('新连接回 200', (await fresh.readHead()).startsWith('HTTP/1.1 200'));
+      fresh.send('newgo');
+      _ok('新连接走直连', utf8.decode(await fresh.take(5)) == 'newgo');
 
-    // 老连接还在，数据照样能走 —— 这是「不掐断在传的」的判据。
-    old.send('alive');
-    _ok('老连接没被掐断', utf8.decode(await old.take(5)) == 'alive');
+      old.socket.destroy();
+      fresh.socket.destroy();
+      await bridge.stop();
+      await a.stop();
+      await echo.stop();
+    }
 
-    // 新连接走直连。
-    final fresh = await _connectBridge(port);
-    fresh.send('CONNECT 127.0.0.1:${echo.port} HTTP/1.1\r\n\r\n');
-    _ok('新连接回 200', (await fresh.readHead()).startsWith('HTTP/1.1 200'));
-    fresh.send('newgo');
-    _ok('新连接走直连', utf8.decode(await fresh.take(5)) == 'newgo');
-
-    old.socket.destroy();
-    fresh.socket.destroy();
-    await bridge.stop();
-    await a.stop();
-    await echo.stop();
-  }
-
-  // ── ⑨ 连上不发请求 → 超时回 408，不是挂在那里占 fd ──
-  {
-    final bridge = SocksBridge();
-    bridge.headTimeout = const Duration(milliseconds: 400);
-    final port = await bridge.start();
-    final peer = await _connectBridge(port);
-    // 故意什么都不发。
-    final head = await peer.readHead();
-    _ok('沉默的客户端回 408', head.startsWith('HTTP/1.1 408'));
-    _ok('原因说得出是超时', bridge.lastError.contains('秒内没收到'));
-    peer.socket.destroy();
-    await bridge.stop();
-  }
-
+    // ── ⑨ 连上不发请求 → 超时回 408，不是挂在那里占 fd ──
+    {
+      final bridge = SocksBridge();
+      bridge.headTimeout = const Duration(milliseconds: 400);
+      final port = await bridge.start();
+      final peer = await _connectBridge(port);
+      // 故意什么都不发。
+      final head = await peer.readHead();
+      _ok('沉默的客户端回 408', head.startsWith('HTTP/1.1 408'));
+      _ok('原因说得出是超时', bridge.lastError.contains('秒内没收到'));
+      peer.socket.destroy();
+      await bridge.stop();
+    }
   });
 }
-
 
 /// 一个只会把收到的字节原样送回的 TCP 服务，用来验直连。
 ///

@@ -21,7 +21,6 @@ void _eq(String name, Object? a, Object? b) {
   expect(a, b, reason: name);
 }
 
-
 /// 造一页假目录的 HTML，形状照抄真站点。
 String _fakePage(int page, {int total = 114, int count = 24}) {
   final start = (page - 1) * 24;
@@ -116,130 +115,130 @@ class _Site._(this._server) {
 
 void main() {
   test('fetch', () async {
-
-  // ── ① 出口没起来 → 必须失败，不能悄悄直连 ──
-  {
-    final site = await _Site.start();
-    // 要代理，但回调返回 null。
-    final f = NumberFetcher(
-      egress: () => null,
-      base: 'http://127.0.0.1:${site.port}',
-    );
-    var threw = false;
-    String msg = '';
-    try {
-      await f.fetchPage(1);
-    } on NumberFetchError catch (e) {
-      threw = true;
-      msg = e.message;
+    // ── ① 出口没起来 → 必须失败，不能悄悄直连 ──
+    {
+      final site = await _Site.start();
+      // 要代理，但回调返回 null。
+      final f = NumberFetcher(
+        egress: () => null,
+        base: 'http://127.0.0.1:${site.port}',
+      );
+      var threw = false;
+      String msg = '';
+      try {
+        await f.fetchPage(1);
+      } on NumberFetchError catch (e) {
+        threw = true;
+        msg = e.message;
+      }
+      _ok('出口为空时抛错', threw);
+      _ok('错因说得出「拒绝直连」', msg.contains('拒绝直连'));
+      _ok('这条不可重试', !(await _isRetryable(f, site)));
+      _ok('站点一次都没被打到', site.requested.isEmpty);
+      f.dispose();
+      await site.stop();
     }
-    _ok('出口为空时抛错', threw);
-    _ok('错因说得出「拒绝直连」', msg.contains('拒绝直连'));
-    _ok('这条不可重试', !(await _isRetryable(f, site)));
-    _ok('站点一次都没被打到', site.requested.isEmpty);
-    f.dispose();
-    await site.stop();
-  }
 
-  // ── ② 明确直连 → 正常工作 ──
-  {
-    final site = await _Site.start();
-    final f = NumberFetcher(
-      egress: () => 'DIRECT',
-      base: 'http://127.0.0.1:${site.port}',
-    );
-    final page = await f.fetchPage(1);
-    _eq('直连抓到 24 条', page.entries.length, 24);
-    _eq('自报总数解析出来', page.total, 114);
-    _eq('推算 5 页', page.pageCount(kNumberPageSize), 5);
-    f.dispose();
-    await site.stop();
-  }
+    // ── ② 明确直连 → 正常工作 ──
+    {
+      final site = await _Site.start();
+      final f = NumberFetcher(
+        egress: () => 'DIRECT',
+        base: 'http://127.0.0.1:${site.port}',
+      );
+      final page = await f.fetchPage(1);
+      _eq('直连抓到 24 条', page.entries.length, 24);
+      _eq('自报总数解析出来', page.total, 114);
+      _eq('推算 5 页', page.pageCount(kNumberPageSize), 5);
+      f.dispose();
+      await site.stop();
+    }
 
-  // ── ③ 抓全部：按自报总数精确算页数，不多抓 ──
-  {
-    final site = await _Site.start();
-    // 最后一页只有 18 条，照真站点。
-    final f = NumberFetcher(
-      egress: () => 'DIRECT',
-      base: 'http://127.0.0.1:${site.port}',
-    );
-    var progressCalls = 0;
-    final all = await f.fetchAll(onProgress: (_, _) => progressCalls++);
-    _ok('抓到 114 条', all.length >= 100);
-    _ok('没有请求第 6 页', !site.requested.contains(6));
-    _ok('请求了 1..5 页', {1, 2, 3, 4, 5}.every(site.requested.contains));
-    _ok('每页只请求一次', site.requested.length == site.requested.toSet().length);
-    _ok('进度回调有多次', progressCalls >= 5);
-    _ok('号码全部唯一', all.map((e) => e.digits).toSet().length == all.length);
-    f.dispose();
-    await site.stop();
-  }
+    // ── ③ 抓全部：按自报总数精确算页数，不多抓 ──
+    {
+      final site = await _Site.start();
+      // 最后一页只有 18 条，照真站点。
+      final f = NumberFetcher(
+        egress: () => 'DIRECT',
+        base: 'http://127.0.0.1:${site.port}',
+      );
+      var progressCalls = 0;
+      final all = await f.fetchAll(onProgress: (_, _) => progressCalls++);
+      _ok('抓到 114 条', all.length >= 100);
+      _ok('没有请求第 6 页', !site.requested.contains(6));
+      _ok('请求了 1..5 页', {1, 2, 3, 4, 5}.every(site.requested.contains));
+      _ok('每页只请求一次', site.requested.length == site.requested.toSet().length);
+      _ok('进度回调有多次', progressCalls >= 5);
+      _ok('号码全部唯一', all.map((e) => e.digits).toSet().length == all.length);
+      f.dispose();
+      await site.stop();
+    }
 
-  // ── ④ 单页失败不让 worker 退出，剩下的页照抓 ──
-  {
-    final site = await _Site.start();
-    site.failPages[3] = 500;
-    final f = NumberFetcher(
-      egress: () => 'DIRECT',
-      base: 'http://127.0.0.1:${site.port}',
-    );
-    final all = await f.fetchAll();
-    _ok('第 3 页挂了但整体还成', all.length > 60);
-    _ok('第 4、5 页照抓', site.requested.contains(4) && site.requested.contains(5));
-    f.dispose();
-    await site.stop();
-  }
+    // ── ④ 单页失败不让 worker 退出，剩下的页照抓 ──
+    {
+      final site = await _Site.start();
+      site.failPages[3] = 500;
+      final f = NumberFetcher(
+        egress: () => 'DIRECT',
+        base: 'http://127.0.0.1:${site.port}',
+      );
+      final all = await f.fetchAll();
+      _ok('第 3 页挂了但整体还成', all.length > 60);
+      _ok(
+        '第 4、5 页照抓',
+        site.requested.contains(4) && site.requested.contains(5),
+      );
+      f.dispose();
+      await site.stop();
+    }
 
-  // ── ⑤ 404 = 到底了，不重试（不白打站点） ──
-  {
-    final site = await _Site.start();
-    site.failPages[2] = 404;
-    final f = NumberFetcher(
-      egress: () => 'DIRECT',
-      base: 'http://127.0.0.1:${site.port}',
-    );
-    final all = await f.fetchAll();
-    // 404 页不重试：第 2 页只该被请求一次。
-    _eq('404 页只请求一次', site.requested.where((p) => p == 2).length, 1);
-    _ok('仍然返回首页那批', all.length >= 24);
-    f.dispose();
-    await site.stop();
-  }
+    // ── ⑤ 404 = 到底了，不重试（不白打站点） ──
+    {
+      final site = await _Site.start();
+      site.failPages[2] = 404;
+      final f = NumberFetcher(
+        egress: () => 'DIRECT',
+        base: 'http://127.0.0.1:${site.port}',
+      );
+      final all = await f.fetchAll();
+      // 404 页不重试：第 2 页只该被请求一次。
+      _eq('404 页只请求一次', site.requested.where((p) => p == 2).length, 1);
+      _ok('仍然返回首页那批', all.length >= 24);
+      f.dispose();
+      await site.stop();
+    }
 
-  // ── ⑥ 自报总数缺失 → 不猜页数，靠「不足一页」判断 ──
-  {
-    final site = await _Site.start();
-    site.total = -1; // 造一页没有「available numbers」的
-    final f = NumberFetcher(
-      egress: () => 'DIRECT',
-      base: 'http://127.0.0.1:${site.port}',
-    );
-    final page = await f.fetchPage(1);
-    _eq('总数解析不出来就是 null', page.total, null);
-    _eq('pageCount 返回 null 而不是猜', page.pageCount(kNumberPageSize), null);
-    f.dispose();
-    await site.stop();
-  }
+    // ── ⑥ 自报总数缺失 → 不猜页数，靠「不足一页」判断 ──
+    {
+      final site = await _Site.start();
+      site.total = -1; // 造一页没有「available numbers」的
+      final f = NumberFetcher(
+        egress: () => 'DIRECT',
+        base: 'http://127.0.0.1:${site.port}',
+      );
+      final page = await f.fetchPage(1);
+      _eq('总数解析不出来就是 null', page.total, null);
+      _eq('pageCount 返回 null 而不是猜', page.pageCount(kNumberPageSize), null);
+      f.dispose();
+      await site.stop();
+    }
 
-  // ── ⑦ 首页不足一页 → 就这么多，不翻页 ──
-  {
-    final site = await _Site.start();
-    site.perPage = 10;
-    final f = NumberFetcher(
-      egress: () => 'DIRECT',
-      base: 'http://127.0.0.1:${site.port}',
-    );
-    final all = await f.fetchAll();
-    _eq('只有 10 条', all.length, 10);
-    _ok('没请求第 2 页', !site.requested.contains(2));
-    f.dispose();
-    await site.stop();
-  }
-
+    // ── ⑦ 首页不足一页 → 就这么多，不翻页 ──
+    {
+      final site = await _Site.start();
+      site.perPage = 10;
+      final f = NumberFetcher(
+        egress: () => 'DIRECT',
+        base: 'http://127.0.0.1:${site.port}',
+      );
+      final all = await f.fetchAll();
+      _eq('只有 10 条', all.length, 10);
+      _ok('没请求第 2 页', !site.requested.contains(2));
+      f.dispose();
+      await site.stop();
+    }
   });
 }
-
 
 /// 出口为空那条错是否被标成不可重试。
 Future<bool> _isRetryable(NumberFetcher f, _Site site) async {
